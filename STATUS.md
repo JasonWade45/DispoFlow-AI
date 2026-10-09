@@ -1,6 +1,6 @@
 # DispoFlow AI — project status
 
-**Updated:** 2026-10-09
+**Updated:** 2026-10-10
 
 **Working branch:** `arena/dac4f10a-dispoflow-ai`
 
@@ -31,7 +31,7 @@
 
 - No Playwright package or system browser is available; no screenshots were captured at 390px or 1280px. Visual/mobile QA, the full walkthrough, and interactive reset behavior remain unverified.
 - No Vercel deployment was created. The deployment guide is preparation only.
-- GitHub treats `dispoflow-ai` as the same name as the existing public `JasonWade45/DispoFlow-AI`. Creating the selected alternate private repo, `dispoflow-ai-demo-private`, failed with `Resource not accessible by integration (createRepository)`. The user was informed that the existing destination is public and explicitly authorized publishing the fixed session branch there. The public push is pending; no `main` push is authorized. No new private repository was created.
+- GitHub treats `dispoflow-ai` as the same name as the existing public `JasonWade45/DispoFlow-AI`. Creating the selected alternate private repo, `dispoflow-ai-demo-private`, failed with `Resource not accessible by integration (createRepository)`. After being informed of the public visibility, the user explicitly authorized the push. Only `arena/dac4f10a-dispoflow-ai` was pushed to [the existing public repository](https://github.com/JasonWade45/DispoFlow-AI); GitHub confirmed `isPrivate: false`, and the remote branch hash matched local `HEAD` (`d9c7c94`). No private repository was created and `main` was not pushed.
 
 ## Product invariants for future phases
 
