@@ -1,0 +1,558 @@
+"use client";
+
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import type { Direction, Property } from "@/types";
+import { useDb, useSession } from "@/lib/store";
+import {
+  buyerById,
+  interactionsForProperty,
+  nextTaskForPair,
+  offersForProperty,
+  propertyById,
+  relationshipsForProperty,
+} from "@/lib/selectors";
+import {
+  formatDate,
+  formatDateTime,
+  formatMoney,
+  fullAddress,
+  parseMoney,
+  relativeTime,
+} from "@/lib/format";
+import { changePropertyStatus, updateProperty } from "@/lib/actions";
+import { useModals } from "@/components/modals/ModalHost";
+import {
+  Badge,
+  Button,
+  Card,
+  DirectionIcon,
+  EmptyState,
+  Field,
+  Input,
+  Modal,
+  PageHeader,
+  Select,
+  Textarea,
+} from "@/components/ui";
+
+const DIRECTION_META: Record<Direction, { label: string; tone: string }> = {
+  in: { label: "In", tone: "text-emerald-600" },
+  out: { label: "Out", tone: "text-sky-600" },
+  internal: { label: "Internal", tone: "text-amber-600" },
+  system: { label: "System", tone: "text-slate-500" },
+};
+
+export default function PropertyDetailPage() {
+  const db = useDb();
+  const { id } = useParams<{ id: string }>();
+  const property = propertyById(db, id);
+
+  if (!property) {
+    return (
+      <Card>
+        <EmptyState
+          title="Property not found"
+          body="This property does not exist or was removed."
+          action={
+            <Link
+              href="/properties"
+              className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-700"
+            >
+              Back to Properties
+            </Link>
+          }
+        />
+      </Card>
+    );
+  }
+
+  return <PropertyDetail key={property.id} property={property} />;
+}
+
+function PropertyDetail({ property }: { property: Property }) {
+  const db = useDb();
+  const session = useSession();
+  const modals = useModals();
+
+  const [info, setInfo] = useState(() => ({
+    address: property.address,
+    city: property.city,
+    state: property.state,
+    zip: property.zip,
+    askingPrice: property.askingPrice === null ? "" : String(property.askingPrice),
+    arv: property.arv === null ? "" : String(property.arv),
+    estimatedRepairs: property.estimatedRepairs === null ? "" : String(property.estimatedRepairs),
+    assignmentPrice: property.assignmentPrice === null ? "" : String(property.assignmentPrice),
+    marketingStartedAt: property.marketingStartedAt ? property.marketingStartedAt.slice(0, 10) : "",
+    expectedClosingDate: property.expectedClosingDate ? property.expectedClosingDate.slice(0, 10) : "",
+  }));
+  const [notes, setNotes] = useState(property.notes);
+  const [infoSaved, setInfoSaved] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [statusValue, setStatusValue] = useState(property.status);
+
+  useEffect(() => {
+    if (!infoSaved) return;
+    const t = window.setTimeout(() => setInfoSaved(false), 2000);
+    return () => window.clearTimeout(t);
+  }, [infoSaved]);
+
+  useEffect(() => {
+    if (!notesSaved) return;
+    const t = window.setTimeout(() => setNotesSaved(false), 2000);
+    return () => window.clearTimeout(t);
+  }, [notesSaved]);
+
+  const setInfoField =
+    (key: keyof typeof info) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+      setInfo((f) => ({ ...f, [key]: e.target.value }));
+
+  function saveInfo() {
+    updateProperty(property.id, {
+      address: info.address.trim() || property.address,
+      city: info.city.trim(),
+      state: info.state.trim().toUpperCase(),
+      zip: info.zip.trim(),
+      askingPrice: parseMoney(info.askingPrice),
+      arv: parseMoney(info.arv),
+      estimatedRepairs: parseMoney(info.estimatedRepairs),
+      assignmentPrice: parseMoney(info.assignmentPrice),
+      marketingStartedAt: info.marketingStartedAt || null,
+      expectedClosingDate: info.expectedClosingDate || null,
+    });
+    setInfoSaved(true);
+  }
+
+  function saveNotes() {
+    updateProperty(property.id, { notes });
+    setNotesSaved(true);
+  }
+
+  function openStatusModal() {
+    setStatusValue(property.status);
+    setStatusOpen(true);
+  }
+
+  function applyStatus() {
+    changePropertyStatus(property.id, statusValue, session.userId ?? "");
+    setStatusOpen(false);
+  }
+
+  const relationships = relationshipsForProperty(db, property.id);
+  const offers = offersForProperty(db, property.id).sort(
+    (a, b) => b.offerDate.localeCompare(a.offerDate) || b.createdAt.localeCompare(a.createdAt),
+  );
+  const interactions = interactionsForProperty(db, property.id);
+
+  return (
+    <div>
+      <PageHeader
+        title={fullAddress(property)}
+        subtitle={`updated ${relativeTime(property.updatedAt)}`}
+        actions={
+          <>
+            <Badge label={property.status} />
+            <Button variant="secondary" onClick={openStatusModal}>
+              Change Status
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => modals.logInteraction({ propertyId: property.id })}
+            >
+              Log Interaction
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => modals.generateFollowUp({ propertyId: property.id })}
+            >
+              Generate Follow-Up
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => modals.createFollowUp({ propertyId: property.id })}
+            >
+              Create Follow-Up
+            </Button>
+            <Button variant="secondary" onClick={() => modals.addOffer({ propertyId: property.id })}>
+              Add Offer
+            </Button>
+            <Button onClick={() => modals.linkBuyer({ propertyId: property.id })}>
+              Link Buyer
+            </Button>
+          </>
+        }
+      />
+
+      <Modal
+        open={statusOpen}
+        onClose={() => setStatusOpen(false)}
+        title="Change Status"
+        description="Update this property's pipeline status."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setStatusOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={applyStatus}>Apply</Button>
+          </>
+        }
+      >
+        <Field label="Property Status">
+          <Select value={statusValue} onChange={(e) => setStatusValue(e.target.value)}>
+            {db.settings.propertyStatuses.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </Modal>
+
+      <div className="grid gap-5 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-semibold text-slate-800">Property Information</h2>
+          </div>
+          <div className="space-y-4 p-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Address" className="sm:col-span-2">
+                <Input value={info.address} onChange={setInfoField("address")} />
+              </Field>
+              <Field label="City">
+                <Input value={info.city} onChange={setInfoField("city")} />
+              </Field>
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="State">
+                  <Input value={info.state} onChange={setInfoField("state")} />
+                </Field>
+                <Field label="ZIP">
+                  <Input value={info.zip} onChange={setInfoField("zip")} />
+                </Field>
+              </div>
+              <Field label="Status">
+                <div className="pt-1">
+                  <Badge label={property.status} />
+                </div>
+              </Field>
+              <Field label="Asking Price">
+                <Input
+                  value={info.askingPrice}
+                  onChange={setInfoField("askingPrice")}
+                  placeholder="150000"
+                />
+              </Field>
+              <Field label="ARV">
+                <Input value={info.arv} onChange={setInfoField("arv")} placeholder="220000" />
+              </Field>
+              <Field label="Estimated Repairs">
+                <Input
+                  value={info.estimatedRepairs}
+                  onChange={setInfoField("estimatedRepairs")}
+                  placeholder="25000"
+                />
+              </Field>
+              <Field label="Assignment Price">
+                <Input
+                  value={info.assignmentPrice}
+                  onChange={setInfoField("assignmentPrice")}
+                  placeholder="20000"
+                />
+              </Field>
+              <Field label="Marketing Started">
+                <Input
+                  type="date"
+                  value={info.marketingStartedAt}
+                  onChange={setInfoField("marketingStartedAt")}
+                />
+              </Field>
+              <Field label="Expected Closing">
+                <Input
+                  type="date"
+                  value={info.expectedClosingDate}
+                  onChange={setInfoField("expectedClosingDate")}
+                />
+              </Field>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button onClick={saveInfo}>Save</Button>
+              {infoSaved && <span className="text-xs font-medium text-emerald-600">Saved</span>}
+            </div>
+          </div>
+        </Card>
+
+        <Card>
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-semibold text-slate-800">Property Notes</h2>
+          </div>
+          <div className="space-y-3 p-4">
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={12}
+              placeholder="Condition details, seller situation, access notes…"
+            />
+            <div className="flex items-center gap-3">
+              <Button onClick={saveNotes}>Save</Button>
+              {notesSaved && <span className="text-xs font-medium text-emerald-600">Saved</span>}
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <Card className="mt-5">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-800">Interested Buyers</h2>
+          <span className="text-xs text-slate-400">{relationships.length} linked</span>
+        </div>
+        {relationships.length === 0 ? (
+          <EmptyState
+            title="No interested buyers yet"
+            body="Link a buyer to this property to start tracking interest and offers."
+            action={
+              <Button onClick={() => modals.linkBuyer({ propertyId: property.id })}>
+                Link Buyer
+              </Button>
+            }
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-3 font-medium">Buyer</th>
+                  <th className="px-4 py-3 font-medium">Buyer Status</th>
+                  <th className="px-4 py-3 font-medium">Interest Status</th>
+                  <th className="px-4 py-3 font-medium">Offer Amount</th>
+                  <th className="px-4 py-3 font-medium">Last Interaction</th>
+                  <th className="px-4 py-3 font-medium">Next Follow-Up</th>
+                  <th className="px-4 py-3 font-medium">Next Action</th>
+                  <th className="px-4 py-3 font-medium" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {relationships.map((r) => {
+                  const buyer = buyerById(db, r.buyerId);
+                  const pairOffers = db.offers
+                    .filter((o) => o.buyerId === r.buyerId && o.propertyId === r.propertyId)
+                    .sort(
+                      (a, b) =>
+                        b.offerDate.localeCompare(a.offerDate) ||
+                        b.createdAt.localeCompare(a.createdAt),
+                    );
+                  const nextTask = nextTaskForPair(db, r.buyerId, r.propertyId);
+                  const followUp = nextTask?.dueDate ?? r.nextFollowUpDate;
+                  return (
+                    <tr key={r.id} className="transition-colors hover:bg-slate-50">
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/buyers/${r.buyerId}`}
+                          className="font-medium text-slate-900 hover:text-slate-700"
+                        >
+                          {buyer?.fullName ?? "Unknown buyer"}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge label={buyer?.status ?? "—"} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge label={r.interestStatus} />
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">
+                        {formatMoney(pairOffers[0]?.amount)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {r.lastInteractionDate ? relativeTime(r.lastInteractionDate) : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">{formatDate(followUp)}</td>
+                      <td className="max-w-[14rem] truncate px-4 py-3 text-slate-600">
+                        {r.nextAction || "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() =>
+                              modals.generateFollowUp({
+                                buyerId: r.buyerId,
+                                propertyId: r.propertyId,
+                              })
+                            }
+                          >
+                            Message
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              modals.logInteraction({
+                                buyerId: r.buyerId,
+                                propertyId: r.propertyId,
+                              })
+                            }
+                          >
+                            Log
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card className="mt-5">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-800">Offers</h2>
+          <span className="text-xs text-slate-400">{offers.length} total</span>
+        </div>
+        {offers.length === 0 ? (
+          <EmptyState
+            title="No offers yet"
+            body="When a buyer submits an offer, it will show up here."
+            action={
+              <Button onClick={() => modals.addOffer({ propertyId: property.id })}>
+                Add Offer
+              </Button>
+            }
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-3 font-medium">Amount</th>
+                  <th className="px-4 py-3 font-medium">Buyer</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium">Offer Date</th>
+                  <th className="hidden px-4 py-3 font-medium md:table-cell">Expires</th>
+                  <th className="hidden px-4 py-3 font-medium md:table-cell">Terms</th>
+                  <th className="px-4 py-3 font-medium">Next Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {offers.map((o) => {
+                  const buyer = buyerById(db, o.buyerId);
+                  return (
+                    <tr key={o.id} className="transition-colors hover:bg-slate-50">
+                      <td className="px-4 py-3 font-medium text-slate-900">
+                        {formatMoney(o.amount)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/buyers/${o.buyerId}`}
+                          className="font-medium text-slate-900 hover:text-slate-700"
+                        >
+                          {buyer?.fullName ?? "Unknown buyer"}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge label={o.status} />
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">{formatDate(o.offerDate)}</td>
+                      <td className="hidden px-4 py-3 text-slate-600 md:table-cell">
+                        {formatDate(o.expiresAt)}
+                      </td>
+                      <td className="hidden max-w-[16rem] truncate px-4 py-3 text-slate-600 md:table-cell">
+                        {o.terms || "—"}
+                      </td>
+                      <td className="max-w-[14rem] truncate px-4 py-3 text-slate-600">
+                        {o.nextAction || "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card className="mt-5">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-800">Activity Timeline</h2>
+          <span className="text-xs text-slate-400">{interactions.length} events</span>
+        </div>
+        {interactions.length === 0 ? (
+          <EmptyState
+            title="No activity yet"
+            body="Log an interaction to start the timeline for this property."
+            action={
+              <Button onClick={() => modals.logInteraction({ propertyId: property.id })}>
+                Log Interaction
+              </Button>
+            }
+          />
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {interactions.map((i) => {
+              const buyer = buyerById(db, i.buyerId);
+              const meta = DIRECTION_META[i.direction];
+              const occurredMs = Date.parse(i.occurredAt);
+              const recordedMs = Date.parse(i.recordedAt);
+              const showLogged =
+                Number.isFinite(occurredMs) &&
+                Number.isFinite(recordedMs) &&
+                Math.abs(recordedMs - occurredMs) > 60000;
+              return (
+                <li key={i.id} className="flex gap-3 px-4 py-3">
+                  <DirectionIcon direction={i.direction} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`text-[11px] font-semibold uppercase tracking-wide ${meta.tone}`}
+                      >
+                        {meta.label}
+                      </span>
+                      <Badge label={i.eventType} />
+                      {buyer && i.buyerId && (
+                        <Link
+                          href={`/buyers/${i.buyerId}`}
+                          className="text-xs font-medium text-slate-500 hover:text-slate-800"
+                        >
+                          {buyer.fullName}
+                        </Link>
+                      )}
+                      {i.potentialOfferAmount !== null && (
+                        <Badge
+                          label={`Mentioned: ${formatMoney(i.potentialOfferAmount)} (unconfirmed)`}
+                        />
+                      )}
+                    </div>
+                    <p className="mt-1.5 whitespace-pre-wrap text-sm text-slate-800">
+                      {i.originalContent}
+                    </p>
+                    {i.enhancedNotes && (
+                      <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-500">
+                          AI Enhanced
+                        </p>
+                        <p className="mt-1 text-sm text-indigo-900">{i.enhancedNotes}</p>
+                        {i.outcome && (
+                          <p className="mt-1 text-xs text-indigo-700">Outcome: {i.outcome}</p>
+                        )}
+                      </div>
+                    )}
+                    <p className="mt-1.5 text-xs text-slate-400">
+                      Occurred {formatDateTime(i.occurredAt)}
+                      {showLogged && (
+                        <span> · logged {formatDateTime(i.recordedAt)}</span>
+                      )}
+                    </p>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Card>
+    </div>
+  );
+}

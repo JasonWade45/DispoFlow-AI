@@ -1,0 +1,14 @@
+
+> dispoflow-ai@0.1.0 dev
+> next dev
+
+▲ Next.js 16.4.0 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://172.28.64.1:3000
+- Environments: .env.local
+✓ Ready in 1446ms
+✓ Running next.config.ts took 107ms
+- Cache Components enabled
+- Partial Prefetching enabled
+
+○ Compiling / ...

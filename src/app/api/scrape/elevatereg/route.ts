@@ -1,0 +1,36 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { scrapeElevateRegProperty } from '@/lib/scraper/elevatereg'
+
+export async function POST(request: NextRequest) {
+  try {
+    const { url } = await request.json()
+    
+    if (!url || !url.includes('elevatereg.com/property/')) {
+      return NextResponse.json(
+        { error: 'Invalid ElevateReg property URL' },
+        { status: 400 }
+      )
+    }
+
+    const property = await scrapeElevateRegProperty(url)
+    
+    return NextResponse.json({ 
+      success: true, 
+      property,
+      preview: {
+        address: `${property.address}, ${property.city}, ${property.state} ${property.zip}`,
+        askingPrice: property.askingPrice,
+        arv: property.arv,
+        images: property.images.length,
+        comps: property.comps.length,
+        specs: property.specs,
+      }
+    })
+  } catch (error) {
+    console.error('Scrape error:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to scrape property' },
+      { status: 500 }
+    )
+  }
+}
