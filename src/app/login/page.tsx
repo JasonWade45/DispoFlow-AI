@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Card, Field, Input } from '@/components/ui'
+import { getDb, setSession } from '@/lib/store'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -11,26 +12,30 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     setLoading(true)
 
     try {
-      const res = await fetch('/api/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        setError(data.error || 'Invalid credentials')
+      const db = getDb()
+      const user = db.users.find(
+        (u) => u.email.toLowerCase() === email.trim().toLowerCase(),
+      )
+      if (!user) {
+        setError('No account found for that email. Use one of the demo accounts below.')
         return
       }
-
-      router.replace('/')
+      if (!user.active) {
+        setError('This account has been disabled.')
+        return
+      }
+      if (password.trim().length < 4) {
+        setError('Password must be at least 4 characters (demo accepts any).')
+        return
+      }
+      setSession(user.id, user)
+      window.location.href = '/'
     } catch {
       setError('Connection error. Please try again.')
     } finally {
@@ -108,7 +113,7 @@ export default function LoginPage() {
         </Card>
 
         <p className="mt-4 text-center text-[11px] text-slate-400">
-          Powered by Supabase + Vercel
+          Prototype — data is stored locally in your browser.
         </p>
       </div>
     </div>

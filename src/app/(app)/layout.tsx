@@ -33,10 +33,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   if (!session.userId) return null
 
+  const user = session.user ?? db.users.find((u) => u.id === session.userId) ?? null
+  if (!user) return null
+
   const k = computeKpis(db)
   const alerts = computeAlerts(db)
   const overdueCount = db.tasks.filter((t) => taskStatus(t) === 'Overdue').length
-  const isOwner = session.user?.role === 'owner'
+  const isOwner = user.role === 'owner'
 
   const nav = (onClick?: () => void) => (
     <nav className="flex flex-1 flex-col gap-1">
@@ -101,7 +104,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <ModalsProvider>
       <AppShell
-        user={session.user!}
+        user={user}
         kpis={k}
         alerts={alerts}
         overdueCount={overdueCount}
