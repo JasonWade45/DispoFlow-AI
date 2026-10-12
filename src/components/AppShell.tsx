@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cx, isFirst } from "@/lib/format";
 import { Badge, Button, Card, PageHeader } from "@/components/ui";
+import SyncBanner from "@/components/SyncBanner";
 
 interface AppShellProps {
   children: ReactNode;
@@ -225,7 +226,10 @@ export default function AppShell({
           </div>
         </header>
 
-        <main className="flex-1 px-4 py-5 sm:px-6 lg:px-8">{children}</main>
+        <main className="flex-1 px-4 py-5 sm:px-6 lg:px-8">
+          <SyncBanner />
+          {children}
+        </main>
       </div>
     </div>
   );

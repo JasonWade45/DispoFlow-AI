@@ -51,6 +51,7 @@ export function addProperty(input: {
   state: string
   zip: string
   status: string
+  accessType?: string
   askingPrice: number | null
   arv: number | null
   estimatedRepairs: number | null
@@ -70,6 +71,7 @@ export function addProperty(input: {
       state: input.state.trim().toUpperCase(),
       zip: input.zip.trim(),
       status: input.status,
+      accessType: input.accessType ?? '',
       askingPrice: input.askingPrice,
       arv: input.arv,
       estimatedRepairs: input.estimatedRepairs,
@@ -84,6 +86,25 @@ export function addProperty(input: {
     return { ...db, properties: [row, ...db.properties] }
   })
   return id
+}
+
+export function importPropertiesBulk(
+  rows: Array<Omit<Property, 'id' | 'orgId' | 'createdAt' | 'updatedAt' | 'createdBy'>>,
+  userId: string,
+): number {
+  const ts = nowIso()
+  updateDb((db) => {
+    const newRows: Property[] = rows.map((r, i) => ({
+      ...r,
+      id: uid(`p${i}_`),
+      orgId: db.organization.id,
+      createdAt: ts,
+      updatedAt: ts,
+      createdBy: userId,
+    }))
+    return { ...db, properties: [...db.properties, ...newRows] }
+  })
+  return rows.length
 }
 
 export function updateProperty(id: string, patch: Partial<Property>): void {

@@ -27,6 +27,8 @@ export type PropertyStatus =
   | "On Hold"
   | "Cancelled";
 
+export type AccessType = "Appointments" | "Lockbox" | "Open" | "";
+
 export interface Property {
   id: ID;
   orgId: ID;
@@ -35,6 +37,7 @@ export interface Property {
   state: string;
   zip: string;
   status: string;
+  accessType: string;
   askingPrice: number | null;
   arv: number | null;
   estimatedRepairs: number | null;

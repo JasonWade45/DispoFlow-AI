@@ -6,6 +6,7 @@ export interface ScrapedProperty {
   city: string
   state: string
   zip: string
+  accessType: string
   askingPrice: number | null
   arv: number | null
   estimatedRepairs: number | null
@@ -145,11 +146,19 @@ export async function scrapeElevateRegProperty(url: string): Promise<ScrapedProp
   const financingMatch = html.match(/WE NOW OFFER LENDING[^<]*/i)
   const financingNote = financingMatch?.[0]?.trim() ?? ''
 
+  // --- Access type (best effort from page text)
+  let accessType = ''
+  const accessText = plain.toLowerCase()
+  if (accessText.includes('lockbox') || accessText.includes('lock box')) accessType = 'Lockbox'
+  else if (accessText.includes('open house')) accessType = 'Open'
+  else if (accessText.includes('appointment')) accessType = 'Appointments'
+
   return {
     address: parsedAddress.address,
     city: parsedAddress.city,
     state: parsedAddress.state,
     zip: parsedAddress.zip,
+    accessType,
     askingPrice,
     arv,
     estimatedRepairs: null,
@@ -160,4 +169,87 @@ export async function scrapeElevateRegProperty(url: string): Promise<ScrapedProp
     financingNote,
     companyLink: url,
   }
+}
+
+export interface ListingCard {
+  url: string
+  address: string
+  price: number | null
+  image: string
+  statusBadge: string
+}
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#8217;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#8211;/g, '–')
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+}
+
+export async function scrapeElevateRegListings(maxPages = 36): Promise<ListingCard[]> {
+  const cards: ListingCard[] = []
+  const seen = new Set<string>()
+
+  const pageUrls: string[] = []
+  for (let page = 1; page <= maxPages; page++) {
+    pageUrls.push(
+      page === 1
+        ? 'https://www.elevatereg.com/property/'
+        : `https://www.elevatereg.com/property/page/${page}/`,
+    )
+  }
+
+  const results = await mapWithConcurrency(pageUrls, 6, async (url) => {
+    try {
+      return await fetchHtml(url)
+    } catch {
+      return null
+    }
+  })
+
+  for (const html of results) {
+    if (!html) continue
+    const articles = html.split(/<article[^>]*class="[^"]*property[^"]*"/i).slice(1)
+    for (const chunk of articles) {
+      const linkMatch = chunk.match(/<a[^>]*href="(https:\/\/www\.elevatereg\.com\/property\/[^"]+)"[^>]*>/i)
+      if (!linkMatch) continue
+      const link = linkMatch[1].replace(/\/$/, '') + '/'
+      if (seen.has(link)) continue
+      const titleMatch = chunk.match(
+        /<(?:h2|p)[^>]*class="[^"]*property-title[^"]*"[^>]*>([\s\S]*?)<\/(?:h2|p)>/i,
+      )
+      const address = titleMatch ? decodeEntities(stripTags(titleMatch[1])) : ''
+      const priceText = chunk.match(/\$\s?([\d,]{5,})/)
+      const price = priceText ? parsePrice(priceText[0]) : null
+      const imgMatch = chunk.match(/<img[^>]*src="([^"]*image-cdn\.carrot\.com[^"]*)"/i)
+      const image = imgMatch ? imgMatch[1] : ''
+      const badgeMatch = chunk.match(/<span[^>]*class="[^"]*badge[^"]*"[^>]*>([\s\S]*?)<\/span>/i)
+      const statusBadge = badgeMatch ? stripTags(badgeMatch[1]) : ''
+      if (!address) continue
+      seen.add(link)
+      cards.push({ url: link, address, price, image, statusBadge })
+    }
+  }
+
+  return cards
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const i = next++
+      results[i] = await fn(items[i])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()))
+  return results
 }

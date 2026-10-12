@@ -146,6 +146,7 @@ export default function PropertiesPage() {
                   <th className="px-4 py-3 font-medium">Property Address</th>
                   <th className="px-4 py-3 font-medium">City/State/ZIP</th>
                   <th className="px-4 py-3 font-medium">Property Status</th>
+                  <th className="hidden px-4 py-3 font-medium lg:table-cell">Access</th>
                   <th className="px-4 py-3 font-medium">Asking Price</th>
                   <th className="hidden px-4 py-3 font-medium md:table-cell">ARV</th>
                   <th className="hidden px-4 py-3 font-medium md:table-cell">Est. Repairs</th>
@@ -176,6 +177,9 @@ export default function PropertiesPage() {
                       </td>
                       <td className="px-4 py-3">
                         <Badge label={p.status} />
+                      </td>
+                      <td className="hidden px-4 py-3 text-slate-600 lg:table-cell">
+                        {p.accessType || "—"}
                       </td>
                       <td className="px-4 py-3 text-slate-700">{formatMoney(p.askingPrice)}</td>
                       <td className="hidden px-4 py-3 text-slate-700 md:table-cell">

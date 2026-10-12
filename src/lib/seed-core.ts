@@ -22,20 +22,21 @@ type PropertySeed = Partial<Property> &
   { id: string; address: string; city: string; state: string; zip: string };
 
 const propertySeed: PropertySeed[] = [
-  { id: "p1", address: "4812 Maple Grove Dr", city: "Dallas", state: "TX", zip: "75228", status: "Marketing", askingPrice: 189000, arv: 265000, estimatedRepairs: 32000, marketingStartedAt: past(21), expectedClosingDate: future(24), notes: "Vacant. Roof replaced in 2021. Easy showing — lockbox on side gate." },
-  { id: "p2", address: "1130 Birchwood Ave", city: "Phoenix", state: "AZ", zip: "85033", status: "Offer Received", askingPrice: 172500, arv: 240000, estimatedRepairs: 28000, marketingStartedAt: past(34), expectedClosingDate: future(18), notes: "Two offers under review. Seller motivated — inherited property." },
-  { id: "p3", address: "905 Sollars Rd", city: "Cleveland", state: "OH", zip: "44112", status: "Under Contract", askingPrice: 118000, arv: 175000, estimatedRepairs: 41000, assignmentPrice: 139000, marketingStartedAt: past(48), expectedClosingDate: future(11), notes: "Assignment deal. Title work in progress." },
-  { id: "p4", address: "2771 Rayford Ln", city: "Houston", state: "TX", zip: "77073", status: "Available", askingPrice: 154000, arv: 210000, estimatedRepairs: 25000, notes: "Photos pending. Ready to list this week." },
-  { id: "p5", address: "614 Peachtree Hollow Ct", city: "Atlanta", state: "GA", zip: "30318", status: "Marketing", askingPrice: 205000, arv: 285000, estimatedRepairs: 35000, marketingStartedAt: past(15), notes: "Strong ARV neighborhood. Buyer demand high." },
-  { id: "p6", address: "3380 W Michigan Ave", city: "Phoenix", state: "AZ", zip: "85035", status: "Pending", askingPrice: 166000, arv: 228000, estimatedRepairs: 30000, assignmentPrice: 174000, marketingStartedAt: past(40), expectedClosingDate: future(6), notes: "Inspection completed. Awaiting appraisal." },
-  { id: "p7", address: "8412 Ironwood St", city: "Dallas", state: "TX", zip: "75241", status: "Sold", askingPrice: 142000, arv: 198000, estimatedRepairs: 22000, assignmentPrice: 155000, marketingStartedAt: past(96), expectedClosingDate: past(12), notes: "Closed with cash buyer. Keep in history for comps." },
-  { id: "p8", address: "1523 Halsted Rd", city: "Cleveland", state: "OH", zip: "44108", status: "On Hold", askingPrice: 99500, arv: 152000, estimatedRepairs: 38000, marketingStartedAt: past(62), notes: "On hold until seller resolves probate." },
-  { id: "p9", address: "720 N Wing St", city: "Houston", state: "TX", zip: "77003", status: "Cancelled", askingPrice: 131000, arv: 178000, estimatedRepairs: 26000, marketingStartedAt: past(75), notes: "Seller backed out. Do not re-market without owner approval." },
-  { id: "p10", address: "4025 Cedar Hill Ln", city: "Atlanta", state: "GA", zip: "30331", status: "Available", askingPrice: 178000, arv: 246000, estimatedRepairs: 29000 },
+  { id: "p1", address: "4812 Maple Grove Dr", city: "Dallas", state: "TX", zip: "75228", status: "Marketing", accessType: "Appointments", askingPrice: 189000, arv: 265000, estimatedRepairs: 32000, marketingStartedAt: past(21), expectedClosingDate: future(24), notes: "Vacant. Roof replaced in 2021. Easy showing — lockbox on side gate." },
+  { id: "p2", address: "1130 Birchwood Ave", city: "Phoenix", state: "AZ", zip: "85033", status: "Offer Received", accessType: "Open", askingPrice: 172500, arv: 240000, estimatedRepairs: 28000, marketingStartedAt: past(34), expectedClosingDate: future(18), notes: "Two offers under review. Seller motivated — inherited property." },
+  { id: "p3", address: "905 Sollars Rd", city: "Cleveland", state: "OH", zip: "44112", status: "Under Contract", accessType: "Lockbox", askingPrice: 118000, arv: 175000, estimatedRepairs: 41000, assignmentPrice: 139000, marketingStartedAt: past(48), expectedClosingDate: future(11), notes: "Assignment deal. Title work in progress." },
+  { id: "p4", address: "2771 Rayford Ln", city: "Houston", state: "TX", zip: "77073", status: "Available", accessType: "Appointments", askingPrice: 154000, arv: 210000, estimatedRepairs: 25000, notes: "Photos pending. Ready to list this week." },
+  { id: "p5", address: "614 Peachtree Hollow Ct", city: "Atlanta", state: "GA", zip: "30318", status: "Marketing", accessType: "Lockbox", askingPrice: 205000, arv: 285000, estimatedRepairs: 35000, marketingStartedAt: past(15), notes: "Strong ARV neighborhood. Buyer demand high." },
+  { id: "p6", address: "3380 W Michigan Ave", city: "Phoenix", state: "AZ", zip: "85035", status: "Pending", accessType: "Open", askingPrice: 166000, arv: 228000, estimatedRepairs: 30000, assignmentPrice: 174000, marketingStartedAt: past(40), expectedClosingDate: future(6), notes: "Inspection completed. Awaiting appraisal." },
+  { id: "p7", address: "8412 Ironwood St", city: "Dallas", state: "TX", zip: "75241", status: "Sold", accessType: "Lockbox", askingPrice: 142000, arv: 198000, estimatedRepairs: 22000, assignmentPrice: 155000, marketingStartedAt: past(96), expectedClosingDate: past(12), notes: "Closed with cash buyer. Keep in history for comps." },
+  { id: "p8", address: "1523 Halsted Rd", city: "Cleveland", state: "OH", zip: "44108", status: "On Hold", accessType: "Appointments", askingPrice: 99500, arv: 152000, estimatedRepairs: 38000, marketingStartedAt: past(62), notes: "On hold until seller resolves probate." },
+  { id: "p9", address: "720 N Wing St", city: "Houston", state: "TX", zip: "77003", status: "Cancelled", accessType: "", askingPrice: 131000, arv: 178000, estimatedRepairs: 26000, marketingStartedAt: past(75), notes: "Seller backed out. Do not re-market without owner approval." },
+  { id: "p10", address: "4025 Cedar Hill Ln", city: "Atlanta", state: "GA", zip: "30331", status: "Available", accessType: "Open", askingPrice: 178000, arv: 246000, estimatedRepairs: 29000 },
 ];
 
 export const seedProperties: Property[] = propertySeed.map((p) => ({
   orgId: ORG_ID,
+  accessType: "",
   askingPrice: null,
   arv: null,
   estimatedRepairs: null,

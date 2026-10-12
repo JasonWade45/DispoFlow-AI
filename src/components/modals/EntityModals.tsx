@@ -23,6 +23,7 @@ export function AddPropertyModal({
     state: "",
     zip: "",
     status: "Available",
+    accessType: "",
     askingPrice: "",
     arv: "",
     estimatedRepairs: "",
@@ -80,6 +81,7 @@ export function AddPropertyModal({
       city: preview.city,
       state: preview.state,
       zip: preview.zip,
+      accessType: preview.accessType ?? f.accessType,
       askingPrice: preview.askingPrice?.toString() || "",
       arv: preview.arv?.toString() || "",
       estimatedRepairs: preview.estimatedRepairs?.toString() || "",
@@ -104,6 +106,7 @@ export function AddPropertyModal({
       state: form.state,
       zip: form.zip,
       status: form.status,
+      accessType: form.accessType,
       askingPrice: parseMoney(form.askingPrice),
       arv: parseMoney(form.arv),
       estimatedRepairs: parseMoney(form.estimatedRepairs),
@@ -224,6 +227,14 @@ export function AddPropertyModal({
                   {s}
                 </option>
               ))}
+            </Select>
+          </Field>
+          <Field label="Access">
+            <Select value={form.accessType} onChange={set("accessType")}>
+              <option value="">— Not set —</option>
+              <option value="Appointments">Appointments</option>
+              <option value="Lockbox">Lockbox</option>
+              <option value="Open">Open</option>
             </Select>
           </Field>
           <Field label="Expected Closing Date">

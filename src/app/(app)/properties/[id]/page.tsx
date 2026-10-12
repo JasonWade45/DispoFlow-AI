@@ -81,6 +81,7 @@ function PropertyDetail({ property }: { property: Property }) {
     city: property.city,
     state: property.state,
     zip: property.zip,
+    accessType: property.accessType ?? "",
     askingPrice: property.askingPrice === null ? "" : String(property.askingPrice),
     arv: property.arv === null ? "" : String(property.arv),
     estimatedRepairs: property.estimatedRepairs === null ? "" : String(property.estimatedRepairs),
@@ -117,6 +118,7 @@ function PropertyDetail({ property }: { property: Property }) {
       city: info.city.trim(),
       state: info.state.trim().toUpperCase(),
       zip: info.zip.trim(),
+      accessType: info.accessType,
       askingPrice: parseMoney(info.askingPrice),
       arv: parseMoney(info.arv),
       estimatedRepairs: parseMoney(info.estimatedRepairs),
@@ -237,6 +239,17 @@ function PropertyDetail({ property }: { property: Property }) {
                 <div className="pt-1">
                   <Badge label={property.status} />
                 </div>
+              </Field>
+              <Field label="Access">
+                <Select
+                  value={info.accessType}
+                  onChange={(e) => setInfo((f) => ({ ...f, accessType: e.target.value }))}
+                >
+                  <option value="">— Not set —</option>
+                  <option value="Appointments">Appointments</option>
+                  <option value="Lockbox">Lockbox</option>
+                  <option value="Open">Open</option>
+                </Select>
               </Field>
               <Field label="Asking Price">
                 <Input
