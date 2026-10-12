@@ -177,6 +177,10 @@ export interface ListingCard {
   price: number | null
   image: string
   statusBadge: string
+  propertyType: string
+  bedrooms: string
+  bathrooms: string
+  sqft: string
 }
 
 function decodeEntities(s: string): string {
@@ -228,9 +232,16 @@ export async function scrapeElevateRegListings(maxPages = 36): Promise<ListingCa
       const image = imgMatch ? imgMatch[1] : ''
       const badgeMatch = chunk.match(/<span[^>]*class="[^"]*badge[^"]*"[^>]*>([\s\S]*?)<\/span>/i)
       const statusBadge = badgeMatch ? stripTags(badgeMatch[1]) : ''
+      const typeMatch = chunk.match(/<span[^>]*class="[^"]*property-type-heading[^"]*"[^>]*>([\s\S]*?)<\/span>/i)
+      const propertyType = typeMatch ? stripTags(typeMatch[1]).replace(/\s*For Sale\s*$/i, '').trim() : ''
+      const detailsMatch = chunk.match(/<ul[^>]*class="[^"]*property-details[^"]*"[^>]*>([\s\S]*?)<\/ul>/i)
+      const detailsHtml = detailsMatch?.[1] ?? ''
+      const bedrooms = detailsHtml.match(/<li[^>]*>\s*(\d+(?:\.\d+)?)\s*bd/i)?.[1] ?? ''
+      const bathrooms = detailsHtml.match(/<li[^>]*>\s*(\d+(?:\.\d+)?)\s*ba/i)?.[1] ?? ''
+      const sqft = detailsHtml.match(/<li[^>]*>\s*([\d,]+)\s*sqft/i)?.[1] ?? ''
       if (!address) continue
       seen.add(link)
-      cards.push({ url: link, address, price, image, statusBadge })
+      cards.push({ url: link, address, price, image, statusBadge, propertyType, bedrooms, bathrooms, sqft })
     }
   }
 

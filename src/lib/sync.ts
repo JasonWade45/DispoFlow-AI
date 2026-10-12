@@ -13,6 +13,10 @@ interface ListingCard {
   price: number | null
   image: string
   statusBadge: string
+  propertyType: string
+  bedrooms: string
+  bathrooms: string
+  sqft: string
 }
 
 export function getLastSync(): string | null {
@@ -149,19 +153,35 @@ export async function runElevateRegSync(
   result.totalOnSite = cards.length
 
   const db = getDb()
-  const existingByAddress = new Set(db.properties.map((p) => normalizeAddress(p.address)))
-  const existingBySource = new Set(
-    db.properties.map((p) => sourceUrlOf(p.notes)).filter(Boolean),
+  const existingByUrl = new Map(
+    db.properties
+      .filter((p) => p.listingUrl)
+      .map((p) => [p.listingUrl.replace(/\/$/, "") + "/", p]),
+  )
+  const existingByAddress = new Map(
+    db.properties.map((p) => [normalizeAddress(p.address), p]),
   )
 
-  const newCards = cards.filter((c) => {
-    const parts = parseAddressParts(c.address)
-    if (!parts) return false
-    if (existingByAddress.has(normalizeAddress(parts.address))) return false
-    if (existingBySource.has(c.url)) return false
-    return true
-  })
-  result.skipped = cards.length - newCards.length
+  const newCards: ListingCard[] = []
+  const updateCards: Array<{ card: ListingCard; property: Property }> = []
+
+  for (const card of cards) {
+    const byUrl = existingByUrl.get(card.url.replace(/\/$/, "") + "/")
+    if (byUrl) {
+      updateCards.push({ card, property: byUrl })
+      continue
+    }
+    const parts = parseAddressParts(card.address)
+    if (parts) {
+      const byAddr = existingByAddress.get(normalizeAddress(parts.address))
+      if (byAddr) {
+        updateCards.push({ card, property: byAddr })
+        continue
+      }
+    }
+    newCards.push(card)
+  }
+  result.skipped = 0
 
   onProgress?.({ phase: "importing", done: 0, total: newCards.length })
   const rows: Array<Omit<Property, "id" | "orgId" | "createdAt" | "updatedAt" | "createdBy">> = []
@@ -186,10 +206,10 @@ export async function runElevateRegSync(
       marketingStartedAt: null,
       expectedClosingDate: null,
       notes: `Source: ${card.url}${card.image ? `\nImage: ${card.image}` : ""}`,
-      propertyType: "",
-      bedrooms: "",
-      bathrooms: "",
-      sqft: "",
+      propertyType: card.propertyType,
+      bedrooms: card.bedrooms,
+      bathrooms: card.bathrooms,
+      sqft: card.sqft,
       lotSize: "",
       yearBuilt: "",
       listingUrl: card.url,
@@ -210,17 +230,46 @@ export async function runElevateRegSync(
   result.newAddresses = rows.map((r) => `${r.address}, ${r.city}`)
   onProgress?.({ phase: "importing", done: newCards.length, total: newCards.length })
 
+  onProgress?.({ phase: "enriching", done: 0, total: updateCards.length })
+  let udone = 0
+  for (const { card, property } of updateCards) {
+    const ts = new Date().toISOString()
+    const newStatus = statusFromBadge(card.statusBadge)
+    const patch: Partial<Property> = {
+      lastSyncedAt: ts,
+      syncStatus: "synced" as const,
+    }
+    if (card.price && card.price !== property.askingPrice) patch.askingPrice = card.price
+    if (card.bedrooms && card.bedrooms !== property.bedrooms) patch.bedrooms = card.bedrooms
+    if (card.bathrooms && card.bathrooms !== property.bathrooms) patch.bathrooms = card.bathrooms
+    if (card.sqft && card.sqft !== property.sqft) patch.sqft = card.sqft
+    if (card.propertyType && card.propertyType !== property.propertyType) patch.propertyType = card.propertyType
+    if (newStatus !== property.status && newStatus !== "Available") patch.status = newStatus
+    if (card.image && !property.photos.includes(card.image)) {
+      patch.photosUrl = card.image
+      patch.photos = [card.image, ...property.photos].slice(0, 20)
+    }
+    if (!property.listingUrl) patch.listingUrl = card.url
+    if (!property.sourceWebsite) patch.sourceWebsite = "elevatereg.com"
+    updateProperty(property.id, patch)
+    result.enriched += 1
+    udone += 1
+    onProgress?.({ phase: "enriching", done: udone, total: updateCards.length })
+  }
+
   const dbAfter = getDb()
   const needsEnrich = dbAfter.properties.filter((p) => {
-    const src = sourceUrlOf(p.notes)
-    return src.includes("elevatereg.com") && (p.arv === null || p.arv === 0)
+    return (
+      (p.sourceWebsite === "elevatereg.com" || p.listingUrl?.includes("elevatereg.com")) &&
+      (p.arv === null || p.arv === 0)
+    )
   })
   const batch = needsEnrich.slice(0, ENRICH_BATCH)
 
-  onProgress?.({ phase: "enriching", done: 0, total: batch.length })
-  let edone = 0
+  onProgress?.({ phase: "enriching", done: updateCards.length, total: updateCards.length + batch.length })
+  let edone = updateCards.length
   for (const p of batch) {
-    const src = sourceUrlOf(p.notes)
+    const src = p.listingUrl || sourceUrlOf(p.notes)
     try {
       const detailRes = await fetch("/api/scrape/elevatereg", {
         method: "POST",
@@ -271,7 +320,7 @@ export async function runElevateRegSync(
       result.failed += 1
     }
     edone += 1
-    onProgress?.({ phase: "enriching", done: edone, total: batch.length })
+    onProgress?.({ phase: "enriching", done: edone, total: updateCards.length + batch.length })
   }
 
   setLastSync()
