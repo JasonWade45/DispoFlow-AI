@@ -281,6 +281,22 @@ export default function SettingsPage() {
                 </svg>
               </div>
             </Link>
+            <Link href="/settings/trello" className="flex items-center justify-between px-4 py-3 hover:bg-slate-50">
+              <div>
+                <p className="text-sm font-medium text-slate-800">Trello</p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  {db.trelloConnections[0]?.isConnected
+                    ? `Connected to ${db.trelloConnections[0].boardName || "a board"}`
+                    : "Import properties from a Trello board"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge label={db.trelloConnections[0]?.isConnected ? "Connected" : "Not connected"} />
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-300">
+                  <path d="M9 18l6-6-6-6" />
+                </svg>
+              </div>
+            </Link>
           </div>
         </Card>
 

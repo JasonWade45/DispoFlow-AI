@@ -257,6 +257,20 @@ export interface SheetConnection {
   updatedAt: string;
 }
 
+export interface TrelloConnection {
+  id: ID;
+  orgId: ID;
+  boardId: string;
+  boardName: string;
+  isConnected: boolean;
+  lastSyncAt: string | null;
+  lastSyncStatus: SyncStatus;
+  lastSyncError: string | null;
+  listMappings: { listId: string; listName: string; propertyStatus: string }[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ImportHistoryEntry {
   id: ID;
   orgId: ID;
@@ -294,6 +308,7 @@ export interface DB {
   offers: Offer[];
   settings: Settings;
   sheetConnections: SheetConnection[];
+  trelloConnections: TrelloConnection[];
   importHistory: ImportHistoryEntry[];
   syncJobs: SyncJob[];
 }

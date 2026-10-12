@@ -30,6 +30,7 @@ export function createSeed(): DB {
     offers: [],
     settings: seedSettings,
     sheetConnections: [],
+    trelloConnections: [],
     importHistory: [],
     syncJobs: [],
   };

@@ -54,6 +54,7 @@ function migrateV1toV2(parsed: Partial<DB> & Record<string, unknown>): DB {
       ...t,
     })),
     sheetConnections: parsed.sheetConnections || [],
+    trelloConnections: parsed.trelloConnections || [],
     importHistory: parsed.importHistory || [],
     syncJobs: parsed.syncJobs || [],
   }
@@ -68,7 +69,7 @@ function hydrate(): void {
       const parsed = JSON.parse(rawDb)
       if (parsed && Array.isArray(parsed.properties)) {
         if (parsed.version === 2) {
-          db = parsed
+          db = { ...parsed, trelloConnections: parsed.trelloConnections || [] }
         } else {
           db = migrateV1toV2(parsed)
         }
