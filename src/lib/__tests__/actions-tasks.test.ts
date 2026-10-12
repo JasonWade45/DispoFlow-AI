@@ -1,12 +1,51 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createSeed } from "@/lib/seed-work";
 import { getDb, updateDb } from "@/lib/store";
-import { completeTask, createTask, markSent } from "@/lib/actions";
+import { addBuyer, addProperty, completeTask, createTask, linkBuyerToProperty, markSent } from "@/lib/actions";
 import { taskStatus } from "@/lib/selectors";
 
 function reset() {
   localStorage.clear();
   updateDb(() => createSeed());
+}
+
+function seedPair(): { buyerId: string; propertyId: string } {
+  const propertyId = addProperty({
+    address: "1 Test St",
+    city: "Austin",
+    state: "TX",
+    zip: "78701",
+    status: "Available",
+    askingPrice: 200000,
+    arv: 280000,
+    estimatedRepairs: null,
+    assignmentPrice: null,
+    expectedClosingDate: null,
+    notes: "",
+    userId: "u_owner",
+  });
+  const buyerId = addBuyer({
+    fullName: "Test Buyer",
+    companyName: "",
+    phone: "",
+    email: "",
+    preferredContactMethod: "SMS",
+    preferredMarkets: [],
+    budgetMin: null,
+    budgetMax: null,
+    status: "Active",
+    notes: "",
+    userId: "u_owner",
+  });
+  linkBuyerToProperty({
+    buyerId,
+    propertyId,
+    interestStatus: "Interested",
+    interestNotes: "",
+    assignedUserId: "u_sarah",
+    userId: "u_owner",
+  });
+  return { buyerId, propertyId };
 }
 
 describe("createTask", () => {
@@ -53,11 +92,10 @@ describe("markSent vs completeTask", () => {
   });
 
   it("markSent updates relationship lastMessageSentAt + lastContactedAt", () => {
-    const rel = getDb().relationships.find((r) => r.buyerId === "b1" && r.propertyId === "p1");
-    expect(rel).toBeDefined();
+    const { buyerId, propertyId } = seedPair();
     const id = createTask({
-      buyerId: "b1",
-      propertyId: "p1",
+      buyerId,
+      propertyId,
       taskType: "Follow-Up Message",
       description: "Text about pricing",
       dueDate: null,
@@ -67,16 +105,17 @@ describe("markSent vs completeTask", () => {
     });
     markSent(id, "sent", "u_sarah");
     const updated = getDb().relationships.find(
-      (r) => r.buyerId === "b1" && r.propertyId === "p1",
+      (r) => r.buyerId === buyerId && r.propertyId === propertyId,
     );
     expect(updated?.lastMessageSentAt).toBeTruthy();
     expect(updated?.lastContactedAt).toBeTruthy();
   });
 
   it("completeTask on a call task sets completedVia=complete and updates lastCallAt", () => {
+    const { buyerId, propertyId } = seedPair();
     const id = createTask({
-      buyerId: "b1",
-      propertyId: "p1",
+      buyerId,
+      propertyId,
       taskType: "Follow-Up Call",
       description: "Call about offer",
       dueDate: null,
@@ -89,7 +128,7 @@ describe("markSent vs completeTask", () => {
     expect(t?.status).toBe("Completed");
     expect(t?.completedVia).toBe("complete");
     const updated = getDb().relationships.find(
-      (r) => r.buyerId === "b1" && r.propertyId === "p1",
+      (r) => r.buyerId === buyerId && r.propertyId === propertyId,
     );
     expect(updated?.lastCallAt).toBeTruthy();
   });

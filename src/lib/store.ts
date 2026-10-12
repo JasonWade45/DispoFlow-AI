@@ -63,7 +63,7 @@ function hydrate(): void {
   if (hydrated || typeof window === 'undefined') return
   hydrated = true
   try {
-    const rawDb = window.localStorage.getItem('dispoflow_db_v1')
+    const rawDb = window.localStorage.getItem('dispoflow_db_v2')
     if (rawDb) {
       const parsed = JSON.parse(rawDb)
       if (parsed && Array.isArray(parsed.properties)) {
@@ -74,7 +74,7 @@ function hydrate(): void {
         }
       }
     }
-    const rawSession = window.localStorage.getItem('dispoflow_session_v1')
+    const rawSession = window.localStorage.getItem('dispoflow_session_v2')
     if (rawSession) {
       const parsed: StoredSession = JSON.parse(rawSession)
       if (parsed && typeof parsed.userId === 'string') {
@@ -91,8 +91,8 @@ const listeners = new Set<() => void>()
 function emit(): void {
   if (typeof window !== 'undefined') {
     try {
-      localStorage.setItem('dispoflow_db_v1', JSON.stringify(db))
-      localStorage.setItem('dispoflow_session_v1', JSON.stringify(session))
+      localStorage.setItem('dispoflow_db_v2', JSON.stringify(db))
+      localStorage.setItem('dispoflow_session_v2', JSON.stringify(session))
     } catch {
       // storage full / unavailable — keep in-memory state
     }
