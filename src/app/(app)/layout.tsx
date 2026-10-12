@@ -44,6 +44,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <nav className="flex flex-1 flex-col gap-1">
       {[
         { href: '/', label: 'Dashboard', icon: 'M3 12l9-8 9 8M5 10v10h5v-6h4v6h5V10' },
+        { href: '/board', label: 'Board', icon: 'M9 3H5a2 2 0 00-2 2v14a2 2 0 002 2h4M9 3v18M9 3h6M15 3v18M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4' },
         { href: '/properties', label: 'Properties', icon: 'M3 10.5L12 3l9 7.5M5 9.5V21h14V9.5' },
         { href: '/buyers', label: 'Buyers', icon: 'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75' },
         { href: '/follow-ups', label: 'Follow-Ups', icon: 'M12 8v4l2.5 2.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
