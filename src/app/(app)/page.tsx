@@ -15,6 +15,7 @@ import {
 import { formatDate, formatMoney, formatTime, relativeTime, cx } from "@/lib/format";
 import { markSent } from "@/lib/actions";
 import { useModals } from "@/components/modals/ModalHost";
+import SyncBanner from "@/components/SyncBanner";
 import { Badge, Button, Card, PageHeader } from "@/components/ui";
 import type { Task } from "@/types";
 
@@ -267,6 +268,37 @@ export default function DashboardPage() {
           </>
         }
       />
+
+      <SyncBanner />
+
+      {db.properties.length === 0 && (
+        <Card className="mb-5 border-dashed px-6 py-8 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M3 10.5L12 3l9 7.5M5 9.5V21h14V9.5" />
+            </svg>
+          </div>
+          <h2 className="mt-3 text-base font-semibold text-slate-800">No properties yet</h2>
+          <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">
+            Pull your properties from ElevateReg or import from Trello to get started.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+            <Button
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("dispoflow:sync-now"));
+              }}
+            >
+              Sync ElevateReg Now
+            </Button>
+            <Link href="/settings/trello">
+              <Button variant="secondary">Connect Trello</Button>
+            </Link>
+            <Button variant="ghost" onClick={() => modals.addProperty()}>
+              Add Manually
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <div id="alerts" className="mb-5 space-y-2">
         {alerts.length === 0 && (

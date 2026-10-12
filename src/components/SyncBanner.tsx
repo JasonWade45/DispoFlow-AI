@@ -39,6 +39,11 @@ export default function SyncBanner() {
   useEffect(() => {
     if (started.current) return
     started.current = true
+    const onSyncNow = () => {
+      setVisible(true)
+      void runSync()
+    }
+    window.addEventListener("dispoflow:sync-now", onSyncNow)
     const due = isSyncDue()
     if (due) {
       const t = window.setTimeout(() => {
@@ -55,6 +60,7 @@ export default function SyncBanner() {
       return () => {
         window.clearTimeout(t)
         window.clearInterval(interval)
+        window.removeEventListener("dispoflow:sync-now", onSyncNow)
       }
     }
     const interval = window.setInterval(() => {
@@ -63,7 +69,10 @@ export default function SyncBanner() {
         void runSync()
       }
     }, 6 * 60 * 60 * 1000)
-    return () => window.clearInterval(interval)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener("dispoflow:sync-now", onSyncNow)
+    }
   }, [runSync])
 
   if (!visible) return null
