@@ -194,6 +194,7 @@ export async function runElevateRegSync(
       yearBuilt: "",
       listingUrl: card.url,
       photosUrl: card.image,
+      photos: card.image ? [card.image] : [],
       sourceWebsite: "elevatereg.com",
       sourcePropertyId: card.url.split("/property/")[1]?.replace(/\/$/, "") ?? "",
       sourceRowId: "",
@@ -255,6 +256,7 @@ export async function runElevateRegSync(
           lotSize: d.specs?.lotSize || p.lotSize,
           yearBuilt: d.specs?.yearBuilt || p.yearBuilt,
           photosUrl: d.images?.[0] || p.photosUrl,
+          photos: d.images && d.images.length > 0 ? d.images : p.photos.length > 0 ? p.photos : p.photosUrl ? [p.photosUrl] : [],
           lastSyncedAt: new Date().toISOString(),
           syncStatus: "synced" as const,
           notes: [p.notes, d.financingNote ? `Financing: ${d.financingNote}` : "", compsLine]

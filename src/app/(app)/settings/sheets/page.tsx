@@ -327,6 +327,7 @@ export default function GoogleSheetsPage() {
               yearBuilt: "",
               listingUrl: row.listingUrl || "",
               photosUrl: row.photosUrl || "",
+              photos: row.photosUrl ? [row.photosUrl] : [],
               sourceWebsite: "google-sheets",
               sourcePropertyId: "",
               sourceRowId: row._row,

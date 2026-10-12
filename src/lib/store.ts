@@ -31,6 +31,7 @@ function migrateV1toV2(parsed: Partial<DB> & Record<string, unknown>): DB {
       yearBuilt: '',
       listingUrl: '',
       photosUrl: '',
+      photos: p.photosUrl ? [p.photosUrl] : [],
       sourceWebsite: '',
       sourcePropertyId: '',
       sourceRowId: '',

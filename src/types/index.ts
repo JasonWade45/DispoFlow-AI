@@ -58,6 +58,7 @@ export interface Property {
   yearBuilt: string;
   listingUrl: string;
   photosUrl: string;
+  photos: string[];
   sourceWebsite: string;
   sourcePropertyId: string;
   sourceRowId: string;

@@ -67,6 +67,7 @@ export function addProperty(input: {
   yearBuilt?: string
   listingUrl?: string
   photosUrl?: string
+  photos?: string[]
   sourceWebsite?: string
   sourcePropertyId?: string
   sourceRowId?: string
@@ -104,6 +105,7 @@ export function addProperty(input: {
       yearBuilt: input.yearBuilt ?? '',
       listingUrl: input.listingUrl ?? '',
       photosUrl: input.photosUrl ?? '',
+      photos: input.photos ?? (input.photosUrl ? [input.photosUrl] : []),
       sourceWebsite: input.sourceWebsite ?? '',
       sourcePropertyId: input.sourcePropertyId ?? '',
       sourceRowId: input.sourceRowId ?? '',

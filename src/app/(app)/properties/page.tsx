@@ -14,7 +14,11 @@ import { formatDate, formatMoney, relativeTime } from "@/lib/format";
 import { useModals } from "@/components/modals/ModalHost";
 import { Badge, Button, Card, EmptyState, Input, PageHeader, Select } from "@/components/ui";
 
-type SortKey = "address" | "price" | "activity" | "followup" | "status";
+type SortKey = "newest" | "address" | "price" | "activity" | "followup" | "status";
+
+function importedIso(p: { firstImportedAt: string | null; createdAt: string }): string {
+  return p.firstImportedAt ?? p.createdAt;
+}
 
 function lastActivityIso(db: DB, propertyId: string): string {
   return interactionsForProperty(db, propertyId)[0]?.occurredAt ?? "";
@@ -42,7 +46,7 @@ export default function PropertiesPage() {
   const modals = useModals();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
-  const [sort, setSort] = useState<SortKey>("address");
+  const [sort, setSort] = useState<SortKey>("newest");
 
   const query = search.trim().toLowerCase();
 
@@ -58,6 +62,9 @@ export default function PropertiesPage() {
       );
     })
     .sort((a, b) => {
+      if (sort === "newest") {
+        return importedIso(b).localeCompare(importedIso(a));
+      }
       if (sort === "price") return (b.askingPrice ?? -1) - (a.askingPrice ?? -1);
       if (sort === "activity") {
         return lastActivityIso(db, b.id).localeCompare(lastActivityIso(db, a.id));
@@ -118,6 +125,7 @@ export default function PropertiesPage() {
             className="sm:w-64"
             aria-label="Sort properties"
           >
+            <option value="newest">Newest First</option>
             <option value="address">Address A–Z</option>
             <option value="price">Asking Price (high to low)</option>
             <option value="activity">Last Activity</option>
@@ -143,6 +151,7 @@ export default function PropertiesPage() {
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-3 font-medium"></th>
                   <th className="px-4 py-3 font-medium">Property Address</th>
                   <th className="px-4 py-3 font-medium">City/State/ZIP</th>
                   <th className="px-4 py-3 font-medium">Property Status</th>
@@ -164,6 +173,23 @@ export default function PropertiesPage() {
                   const due = nextFollowUpDue(db, p.id);
                   return (
                     <tr key={p.id} className="transition-colors hover:bg-slate-50">
+                      <td className="px-4 py-3">
+                        {(() => {
+                          const thumb = p.photos?.[0] ?? p.photosUrl;
+                          return thumb ? (
+                            <img
+                              src={thumb}
+                              alt=""
+                              className="h-12 w-16 rounded-md object-cover"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="flex h-12 w-16 items-center justify-center rounded-md bg-slate-100 text-[10px] text-slate-400">
+                              No img
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td className="px-4 py-3">
                         <Link
                           href={`/properties/${p.id}`}

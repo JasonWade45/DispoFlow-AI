@@ -55,6 +55,7 @@ export const seedProperties: Property[] = propertySeed.map((p) => ({
   yearBuilt: "",
   listingUrl: "",
   photosUrl: "",
+  photos: [],
   sourceWebsite: "",
   sourcePropertyId: "",
   sourceRowId: "",

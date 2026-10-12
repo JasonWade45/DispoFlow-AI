@@ -247,6 +247,44 @@ function PropertyDetail({ property }: { property: Property }) {
         </Field>
       </Modal>
 
+      {(() => {
+        const gallery = (property.photos && property.photos.length > 0)
+          ? property.photos
+          : property.photosUrl
+            ? [property.photosUrl]
+            : [];
+        if (gallery.length === 0) return null;
+        return (
+          <Card className="mb-5">
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <h2 className="text-sm font-semibold text-slate-800">
+                Photos ({gallery.length})
+              </h2>
+            </div>
+            <div className="p-4">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {gallery.map((src, i) => (
+                  <a
+                    key={i}
+                    href={src}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group block overflow-hidden rounded-lg border border-slate-200"
+                  >
+                    <img
+                      src={src}
+                      alt={`Photo ${i + 1}`}
+                      className="h-40 w-full object-cover transition-transform group-hover:scale-105"
+                      loading="lazy"
+                    />
+                  </a>
+                ))}
+              </div>
+            </div>
+          </Card>
+        );
+      })()}
+
       {hasSource && (
         <Card className="mb-5">
           <div className="border-b border-slate-100 px-4 py-3">
