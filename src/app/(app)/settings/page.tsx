@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import type { DB, Settings } from "@/types";
 import { resetDemoData, updateDb, useDb, useSession } from "@/lib/store";
@@ -257,6 +258,31 @@ export default function SettingsPage() {
             {notice}
           </p>
         )}
+
+        <Card>
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-semibold text-slate-800">Integrations</h2>
+            <p className="mt-0.5 text-xs text-slate-400">Connect external data sources</p>
+          </div>
+          <div className="divide-y divide-slate-100">
+            <Link href="/settings/sheets" className="flex items-center justify-between px-4 py-3 hover:bg-slate-50">
+              <div>
+                <p className="text-sm font-medium text-slate-800">Google Sheets</p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  {db.sheetConnections[0]?.isConnected
+                    ? `Connected to ${db.sheetConnections[0].spreadsheetName || "a spreadsheet"}`
+                    : "Import property data from a spreadsheet"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge label={db.sheetConnections[0]?.isConnected ? "Connected" : "Not connected"} />
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-300">
+                  <path d="M9 18l6-6-6-6" />
+                </svg>
+              </div>
+            </Link>
+          </div>
+        </Card>
 
         <div>
           <h2 className="mb-2 text-sm font-semibold text-slate-800">Status lists</h2>

@@ -1,7 +1,7 @@
 'use client'
 
-import { useSyncExternalStore, useState, useEffect } from 'react'
-import type { DB, Session, User } from '@/types'
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import type { DB, Property, BuyerProperty, Task, Session, User } from '@/types'
 import { createSeed } from './seed-work'
 
 const serverDb = createSeed()
@@ -11,6 +11,53 @@ let db = serverDb
 let session: Session = serverSession
 let hydrated = false
 
+interface StoredSession {
+  userId: string | null
+  user?: User | null
+}
+
+function migrateV1toV2(parsed: Partial<DB> & Record<string, unknown>): DB {
+  const base = createSeed()
+  return {
+    ...base,
+    ...parsed,
+    version: 2,
+    properties: ((parsed.properties as Property[] | undefined) || []).map((p) => ({
+      propertyType: '',
+      bedrooms: '',
+      bathrooms: '',
+      sqft: '',
+      lotSize: '',
+      yearBuilt: '',
+      listingUrl: '',
+      photosUrl: '',
+      sourceWebsite: '',
+      sourcePropertyId: '',
+      sourceRowId: '',
+      firstImportedAt: null,
+      lastSyncedAt: null,
+      syncStatus: 'never',
+      ...p,
+    })),
+    relationships: ((parsed.relationships as BuyerProperty[] | undefined) || []).map((r) => ({
+      lastContactedAt: null,
+      lastMessageSentAt: null,
+      lastCallAt: null,
+      syncStatus: 'never',
+      sourceRowId: '',
+      ...r,
+    })),
+    tasks: ((parsed.tasks as Task[] | undefined) || []).map((t) => ({
+      completedVia: t.status === 'Completed' ? 'complete' : t.status === 'Cancelled' ? 'cancelled' : null,
+      sentAt: null,
+      ...t,
+    })),
+    sheetConnections: parsed.sheetConnections || [],
+    importHistory: parsed.importHistory || [],
+    syncJobs: parsed.syncJobs || [],
+  }
+}
+
 function hydrate(): void {
   if (hydrated || typeof window === 'undefined') return
   hydrated = true
@@ -18,17 +65,19 @@ function hydrate(): void {
     const rawDb = window.localStorage.getItem('dispoflow_db_v1')
     if (rawDb) {
       const parsed = JSON.parse(rawDb)
-      if (parsed && parsed.version === 1 && Array.isArray(parsed.properties)) {
-        db = parsed
+      if (parsed && Array.isArray(parsed.properties)) {
+        if (parsed.version === 2) {
+          db = parsed
+        } else {
+          db = migrateV1toV2(parsed)
+        }
       }
     }
     const rawSession = window.localStorage.getItem('dispoflow_session_v1')
     if (rawSession) {
-      const parsed = JSON.parse(rawSession)
+      const parsed: StoredSession = JSON.parse(rawSession)
       if (parsed && typeof parsed.userId === 'string') {
-        // Find user in db
-        const user = (parsed as any).user || null
-        session = { userId: parsed.userId, user }
+        session = { userId: parsed.userId, user: parsed.user || null }
       }
     }
   } catch {
@@ -77,22 +126,21 @@ function getServerSession() {
 }
 
 export function useDb() {
-  const { useSyncExternalStore } = require('react')
   return useSyncExternalStore(subscribe, getSnapshot, getServerDb)
 }
 
 export const useDB = useDb
 
 export function useSession() {
-  const { useSyncExternalStore } = require('react')
   return useSyncExternalStore(subscribe, getSessionSnapshot, getServerSession)
 }
 
 export function useLoading() {
-  const [loading, setLoading] = require('react').useState(true)
-  require('react').useEffect(() => {
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
     hydrate()
-    setLoading(false)
+    const t = window.setTimeout(() => setLoading(false), 0)
+    return () => window.clearTimeout(t)
   }, [])
   return loading
 }
@@ -106,7 +154,7 @@ export function getDb() {
   return db
 }
 
-function mutate(fn: (draft: any) => any) {
+function mutate(fn: (draft: DB) => DB) {
   hydrate()
   db = fn(db)
   emit()
@@ -120,15 +168,15 @@ export function setSession(userId: string | null, user: User | null = null) {
 
 export function resetDemoData() {
   hydrate()
-  db = require('./seed-work').createSeed()
+  db = createSeed()
   emit()
 }
 
-export function applyDb(next: any) {
+export function applyDb(next: DB) {
   mutate(() => next)
 }
 
-export function updateDb(fn: (draft: any) => any) {
+export function updateDb(fn: (draft: DB) => DB) {
   mutate(fn)
 }
 

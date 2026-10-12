@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useMemo } from "react";
 import { useDb, useSession } from "@/lib/store";
 import {
   buyerById,
@@ -12,8 +13,10 @@ import {
   taskStatus,
 } from "@/lib/selectors";
 import { formatDate, formatMoney, formatTime, relativeTime, cx } from "@/lib/format";
+import { markSent } from "@/lib/actions";
 import { useModals } from "@/components/modals/ModalHost";
 import { Badge, Button, Card, PageHeader } from "@/components/ui";
+import type { Task } from "@/types";
 
 function KpiCard({
   label,
@@ -49,6 +52,135 @@ const ALERT_TONES: Record<string, string> = {
   info: "border-sky-200 bg-sky-50 text-sky-800",
 };
 
+function TaskRow({
+  task,
+  db,
+  modals,
+  sessionUserId,
+}: {
+  task: Task;
+  db: ReturnType<typeof useDb>;
+  modals: ReturnType<typeof useModals>;
+  sessionUserId: string;
+}) {
+  const buyer = buyerById(db, task.buyerId);
+  const property = propertyById(db, task.propertyId);
+  const s = taskStatus(task);
+  const isMessage = task.taskType.toLowerCase().includes("message");
+  const propertyHref =
+    task.propertyId && task.buyerId
+      ? `/properties/${task.propertyId}?buyer=${task.buyerId}`
+      : task.propertyId
+        ? `/properties/${task.propertyId}`
+        : task.buyerId
+          ? `/buyers/${task.buyerId}`
+          : null;
+
+  return (
+    <li className="flex items-center gap-3 px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge label={s} />
+          <span className="text-xs text-slate-400">{task.taskType}</span>
+          {task.priority === "Urgent" && <Badge label="Urgent" />}
+          {task.completedVia === "sent" && <Badge label="Sent" />}
+        </div>
+        <p className="mt-1 truncate text-sm text-slate-800">
+          {propertyHref ? (
+            <Link href={propertyHref} className="hover:text-slate-950 hover:underline">
+              {task.description}
+            </Link>
+          ) : (
+            task.description
+          )}
+        </p>
+        <p className="mt-0.5 truncate text-xs text-slate-400">
+          {buyer?.fullName ?? "No buyer"}
+          {property ? ` · ${property.address}` : ""}
+          {task.dueDate ? ` · due ${formatDate(task.dueDate)} ${formatTime(task.dueTime)}` : " · no date"}
+          {task.sentAt ? ` · sent ${relativeTime(task.sentAt)}` : ""}
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {isMessage && task.status !== "Completed" && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => markSent(task.id, "Message sent from dashboard", sessionUserId)}
+            title="Mark message as sent"
+          >
+            Mark Sent
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => modals.completeTask(task)}
+          title="Complete"
+        >
+          Done
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() =>
+            modals.generateFollowUp({ buyerId: task.buyerId, propertyId: task.propertyId })
+          }
+          title="Generate follow-up message"
+        >
+          Message
+        </Button>
+      </div>
+    </li>
+  );
+}
+
+function SectionCard({
+  title,
+  count,
+  tone,
+  tasks,
+  db,
+  modals,
+  sessionUserId,
+  emptyText,
+  viewAllHref,
+}: {
+  title: string;
+  count: number;
+  tone: string;
+  tasks: Task[];
+  db: ReturnType<typeof useDb>;
+  modals: ReturnType<typeof useModals>;
+  sessionUserId: string;
+  emptyText: string;
+  viewAllHref: string;
+}) {
+  return (
+    <Card>
+      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
+          <span className={cx("rounded-full px-2 py-0.5 text-[11px] font-semibold", tone)}>
+            {count}
+          </span>
+        </div>
+        <Link href={viewAllHref} className="text-xs font-medium text-slate-500 hover:text-slate-800">
+          View all
+        </Link>
+      </div>
+      <ul className="divide-y divide-slate-100">
+        {tasks.length === 0 && (
+          <li className="px-4 py-6 text-center text-sm text-slate-400">{emptyText}</li>
+        )}
+        {tasks.slice(0, 5).map((t) => (
+          <TaskRow key={t.id} task={t} db={db} modals={modals} sessionUserId={sessionUserId} />
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export default function DashboardPage() {
   const db = useDb();
   const session = useSession();
@@ -56,8 +188,52 @@ export default function DashboardPage() {
   const k = computeKpis(db);
   const alerts = computeAlerts(db);
 
-  const openTasks = db.tasks.filter((t) => t.status !== "Completed" && t.status !== "Cancelled");
-  const priorityTasks = sortTasksByPriority(db, openTasks).slice(0, 6);
+  const sections = useMemo(() => {
+    const now = new Date();
+    const todayIsoStr = now.toISOString().slice(0, 10);
+    const openTasks = db.tasks.filter((t) => t.status !== "Completed" && t.status !== "Cancelled");
+
+    const overdue: Task[] = [];
+    const dueToday: Task[] = [];
+    const upcoming: Task[] = [];
+    const unscheduled: Task[] = [];
+    const completedToday: Task[] = [];
+
+    for (const t of openTasks) {
+      const s = taskStatus(t, now);
+      if (s === "Overdue") overdue.push(t);
+      else if (s === "Due") dueToday.push(t);
+      else if (s === "Needs Scheduling") unscheduled.push(t);
+      else if (s === "Scheduled") {
+        const due = t.dueDate ? new Date(t.dueDate + "T23:59:59").getTime() : 0;
+        if (due - now.getTime() <= 7 * 86400000) upcoming.push(t);
+      }
+    }
+
+    for (const t of db.tasks) {
+      if (
+        t.status === "Completed" &&
+        t.completedAt &&
+        t.completedAt.slice(0, 10) === todayIsoStr
+      ) {
+        completedToday.push(t);
+      }
+    }
+
+    const syncFailed = db.properties.filter((p) => p.syncStatus === "error");
+
+    return {
+      overdue: sortTasksByPriority(db, overdue, now),
+      dueToday: sortTasksByPriority(db, dueToday, now),
+      upcoming: sortTasksByPriority(db, upcoming, now),
+      unscheduled: sortTasksByPriority(db, unscheduled, now),
+      completedToday: completedToday.sort((a, b) =>
+        (b.completedAt ?? "").localeCompare(a.completedAt ?? ""),
+      ),
+      syncFailed,
+    };
+  }, [db]);
+
   const attentionOffers = db.offers
     .filter(isOpenOffer)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -129,6 +305,105 @@ export default function DashboardPage() {
         <KpiCard label="Completed Today" value={k.completedToday} href="/follow-ups?tab=Completed" tone="border-emerald-200" hint="Follow-ups done today" />
       </div>
 
+      <div className="mb-6 grid gap-5 lg:grid-cols-2">
+        <SectionCard
+          title="Overdue"
+          count={sections.overdue.length}
+          tone="bg-rose-100 text-rose-700"
+          tasks={sections.overdue}
+          db={db}
+          modals={modals}
+          sessionUserId={session.userId ?? "u_sarah"}
+          emptyText="Nothing overdue — you're caught up."
+          viewAllHref="/follow-ups?tab=Overdue"
+        />
+        <SectionCard
+          title="Due Today"
+          count={sections.dueToday.length}
+          tone="bg-amber-100 text-amber-700"
+          tasks={sections.dueToday}
+          db={db}
+          modals={modals}
+          sessionUserId={session.userId ?? "u_sarah"}
+          emptyText="Nothing due today."
+          viewAllHref="/follow-ups?tab=Due"
+        />
+        <SectionCard
+          title="Upcoming (7 days)"
+          count={sections.upcoming.length}
+          tone="bg-sky-100 text-sky-700"
+          tasks={sections.upcoming}
+          db={db}
+          modals={modals}
+          sessionUserId={session.userId ?? "u_sarah"}
+          emptyText="Nothing scheduled in the next 7 days."
+          viewAllHref="/follow-ups?tab=Scheduled"
+        />
+        <SectionCard
+          title="Unscheduled"
+          count={sections.unscheduled.length}
+          tone="bg-purple-100 text-purple-700"
+          tasks={sections.unscheduled}
+          db={db}
+          modals={modals}
+          sessionUserId={session.userId ?? "u_sarah"}
+          emptyText="Everything has a date."
+          viewAllHref="/follow-ups?tab=Needs%20Scheduling"
+        />
+        <SectionCard
+          title="Completed Today"
+          count={sections.completedToday.length}
+          tone="bg-emerald-100 text-emerald-700"
+          tasks={sections.completedToday}
+          db={db}
+          modals={modals}
+          sessionUserId={session.userId ?? "u_sarah"}
+          emptyText="No follow-ups completed yet today."
+          viewAllHref="/follow-ups?tab=Completed"
+        />
+        <Card>
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-slate-800">Sync Issues</h2>
+              <span
+                className={cx(
+                  "rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                  sections.syncFailed.length > 0
+                    ? "bg-rose-100 text-rose-700"
+                    : "bg-emerald-100 text-emerald-700",
+                )}
+              >
+                {sections.syncFailed.length}
+              </span>
+            </div>
+            <Link href="/properties" className="text-xs font-medium text-slate-500 hover:text-slate-800">
+              View all
+            </Link>
+          </div>
+          <ul className="divide-y divide-slate-100">
+            {sections.syncFailed.length === 0 && (
+              <li className="px-4 py-6 text-center text-sm text-slate-400">
+                All properties synced successfully.
+              </li>
+            )}
+            {sections.syncFailed.slice(0, 5).map((p) => (
+              <li key={p.id}>
+                <Link href={`/properties/${p.id}`} className="block px-4 py-3 hover:bg-slate-50">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate text-sm font-medium text-slate-800">{p.address}</p>
+                    <Badge label={p.syncStatus} />
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    {p.sourceWebsite || "Unknown source"} · last synced{" "}
+                    {p.lastSyncedAt ? relativeTime(p.lastSyncedAt) : "never"}
+                  </p>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      </div>
+
       <div className="grid gap-5 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
@@ -138,51 +413,22 @@ export default function DashboardPage() {
             </Link>
           </div>
           <ul className="divide-y divide-slate-100">
-            {priorityTasks.length === 0 && (
-              <li className="px-4 py-6 text-center text-sm text-slate-400">All clear — no open follow-ups.</li>
+            {sortTasksByPriority(db, db.tasks.filter((t) => t.status !== "Completed" && t.status !== "Cancelled"))
+              .slice(0, 6)
+              .map((t) => (
+                <TaskRow
+                  key={t.id}
+                  task={t}
+                  db={db}
+                  modals={modals}
+                  sessionUserId={session.userId ?? "u_sarah"}
+                />
+              ))}
+            {db.tasks.filter((t) => t.status !== "Completed" && t.status !== "Cancelled").length === 0 && (
+              <li className="px-4 py-6 text-center text-sm text-slate-400">
+                All clear — no open follow-ups.
+              </li>
             )}
-            {priorityTasks.map((t) => {
-              const buyer = buyerById(db, t.buyerId);
-              const property = propertyById(db, t.propertyId);
-              const s = taskStatus(t);
-              return (
-                <li key={t.id} className="flex items-center gap-3 px-4 py-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge label={s} />
-                      <span className="text-xs text-slate-400">{t.taskType}</span>
-                      {t.priority === "Urgent" && <Badge label="Urgent" />}
-                    </div>
-                    <p className="mt-1 truncate text-sm text-slate-800">{t.description}</p>
-                    <p className="mt-0.5 truncate text-xs text-slate-400">
-                      {buyer?.fullName ?? "No buyer"}
-                      {property ? ` · ${property.address}` : ""}
-                      {t.dueDate ? ` · due ${formatDate(t.dueDate)} ${formatTime(t.dueTime)}` : " · no date"}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => modals.completeTask(t)}
-                      title="Complete"
-                    >
-                      Done
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() =>
-                        modals.generateFollowUp({ buyerId: t.buyerId, propertyId: t.propertyId })
-                      }
-                      title="Generate follow-up message"
-                    >
-                      Message
-                    </Button>
-                  </div>
-                </li>
-              );
-            })}
           </ul>
         </Card>
 

@@ -68,6 +68,8 @@ export const seedTasks: Task[] = taskRows.map((t) => ({
   completionNotes: "",
   createdAt: ts(20),
   completedAt: t.status === "Completed" ? ts(t.id === "t21" ? 0 : 4, 9, 15) : null,
+  completedVia: t.status === "Completed" ? ("complete" as const) : t.status === "Cancelled" ? ("cancelled" as const) : null,
+  sentAt: null,
   ...t,
 }) as Task);
 
@@ -100,7 +102,7 @@ export const seedOffers: Offer[] = offerRows.map((o) => ({
 
 export function createSeed(): DB {
   return {
-    version: 1,
+    version: 2,
     organization: { id: ORG_ID, name: "Summit Property Buyers", createdAt: ts(120) },
     users: seedUsers,
     properties: seedProperties,
@@ -110,5 +112,8 @@ export function createSeed(): DB {
     tasks: seedTasks,
     offers: seedOffers,
     settings: seedSettings,
+    sheetConnections: [],
+    importHistory: [],
+    syncJobs: [],
   };
 }

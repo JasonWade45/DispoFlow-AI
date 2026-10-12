@@ -34,7 +34,21 @@ export function AddPropertyModal({
   });
   const [error, setError] = useState("");
   const [fetching, setFetching] = useState(false);
-  const [preview, setPreview] = useState<any>(null);
+  const [preview, setPreview] = useState<{
+    address?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    askingPrice?: number;
+    arv?: number;
+    estimatedRepairs?: number;
+    accessType?: string;
+    companyLink?: string;
+    financingNote?: string;
+    specs?: { bedrooms?: string; bathrooms?: string; sqft?: string; yearBuilt?: string };
+    images?: string[];
+    comps?: Array<{ address?: string; soldPrice?: number }>;
+  } | null>(null);
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -89,7 +103,7 @@ export function AddPropertyModal({
         f.notes,
         `Source: ${preview.companyLink}`,
         preview.financingNote ? `Financing: ${preview.financingNote}` : "",
-        preview.comps.length > 0 ? `Comps: ${preview.comps.map((c: any) => `${c.address} - $${c.soldPrice?.toLocaleString()}`).join('; ')}` : "",
+        preview.comps && preview.comps.length > 0 ? `Comps: ${preview.comps.map((c) => `${c.address} - $${c.soldPrice?.toLocaleString()}`).join('; ')}` : "",
       ].filter(Boolean).join('\n'),
     }));
     setPreview(null);

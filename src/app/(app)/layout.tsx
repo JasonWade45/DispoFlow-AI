@@ -1,7 +1,7 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
-import { useDB, useSession, useLoading, useRefresh } from '@/lib/store'
+import { useEffect, useState } from 'react'
+import { useDB, useSession, useLoading } from '@/lib/store'
 import AppShell from '@/components/AppShell'
 import { computeAlerts, computeKpis, taskStatus } from '@/lib/selectors'
 import { ModalsProvider } from '@/components/modals/ModalHost'
@@ -10,7 +10,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const db = useDB()
   const session = useSession()
   const loading = useLoading()
-  const refresh = useRefresh()
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -110,7 +109,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         overdueCount={overdueCount}
         isOwner={isOwner}
         nav={nav}
-        refresh={refresh}
       >
         {children}
       </AppShell>

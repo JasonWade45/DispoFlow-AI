@@ -59,6 +59,20 @@ export function addProperty(input: {
   expectedClosingDate: string | null
   notes: string
   userId: string
+  propertyType?: string
+  bedrooms?: string
+  bathrooms?: string
+  sqft?: string
+  lotSize?: string
+  yearBuilt?: string
+  listingUrl?: string
+  photosUrl?: string
+  sourceWebsite?: string
+  sourcePropertyId?: string
+  sourceRowId?: string
+  firstImportedAt?: string | null
+  lastSyncedAt?: string | null
+  syncStatus?: string
 }): string {
   const id = uid('p')
   const ts = nowIso()
@@ -82,6 +96,20 @@ export function addProperty(input: {
       createdAt: ts,
       updatedAt: ts,
       createdBy: input.userId,
+      propertyType: input.propertyType ?? '',
+      bedrooms: input.bedrooms ?? '',
+      bathrooms: input.bathrooms ?? '',
+      sqft: input.sqft ?? '',
+      lotSize: input.lotSize ?? '',
+      yearBuilt: input.yearBuilt ?? '',
+      listingUrl: input.listingUrl ?? '',
+      photosUrl: input.photosUrl ?? '',
+      sourceWebsite: input.sourceWebsite ?? '',
+      sourcePropertyId: input.sourcePropertyId ?? '',
+      sourceRowId: input.sourceRowId ?? '',
+      firstImportedAt: input.firstImportedAt ?? ts,
+      lastSyncedAt: input.lastSyncedAt ?? null,
+      syncStatus: (input.syncStatus ?? 'never') as Property['syncStatus'],
     }
     return { ...db, properties: [row, ...db.properties] }
   })
@@ -237,6 +265,11 @@ export function linkBuyerToProperty(input: {
       relationshipStatus: 'Active',
       createdAt: ts,
       updatedAt: ts,
+      lastContactedAt: null,
+      lastMessageSentAt: null,
+      lastCallAt: null,
+      syncStatus: 'never',
+      sourceRowId: '',
     }
     created = true
     const interactions = [...db.interactions]
@@ -359,6 +392,8 @@ export function createTask(input: {
       completionNotes: '',
       createdAt: ts,
       completedAt: null,
+      completedVia: null,
+      sentAt: null,
     }
     const relationships =
       input.buyerId && input.propertyId
@@ -385,16 +420,34 @@ export function updateTask(id: string, patch: Partial<Task>): void {
   }))
 }
 
-export function completeTask(id: string, completionNotes: string, userId: string): void {
+export function completeTask(
+  id: string,
+  completionNotes: string,
+  userId: string,
+  via: 'complete' | 'sent' = 'complete',
+): void {
   updateDb((db) => {
     const task = db.tasks.find((t) => t.id === id)
     if (!task) return db
+    if (task.status === 'Completed' || task.status === 'Cancelled') return db
     const ts = nowIso()
+    const isMessageTask = task.taskType.toLowerCase().includes('message')
+    const completedVia: Task['completedVia'] = via === 'sent' ? 'sent' : isMessageTask && via === 'complete' ? 'complete' : via
+    const sentAt = via === 'sent' ? ts : task.sentAt
+
     const tasks = db.tasks.map((t) =>
       t.id === id
-        ? { ...t, status: 'Completed' as const, completionNotes, completedAt: ts }
+        ? {
+            ...t,
+            status: 'Completed' as const,
+            completionNotes,
+            completedAt: ts,
+            completedVia,
+            sentAt,
+          }
         : t,
     )
+
     const interactions = [...db.interactions]
     const draft = { interactions, organization: db.organization }
     logSystem(
@@ -403,14 +456,37 @@ export function completeTask(id: string, completionNotes: string, userId: string
         buyerId: task.buyerId,
         propertyId: task.propertyId,
         eventType: 'Follow-Up Completed',
-        originalContent: `Follow-up completed: ${task.description}${
+        originalContent: `Follow-up completed${via === 'sent' ? ' (message sent)' : ''}: ${task.description}${
           completionNotes ? ` — ${completionNotes}` : ''
         }`,
       },
       userId,
     )
-    return { ...db, tasks, interactions }
+
+    let relationships = db.relationships
+    if (task.buyerId && task.propertyId) {
+      relationships = relationships.map((r) => {
+        if (r.buyerId === task.buyerId && r.propertyId === task.propertyId) {
+          const patch: Partial<typeof r> = { updatedAt: ts }
+          if (via === 'sent') {
+            patch.lastMessageSentAt = ts
+            patch.lastContactedAt = ts
+          } else if (task.taskType.toLowerCase().includes('call')) {
+            patch.lastCallAt = ts
+            patch.lastContactedAt = ts
+          }
+          return { ...r, ...patch }
+        }
+        return r
+      })
+    }
+
+    return { ...db, tasks, interactions, relationships }
   })
+}
+
+export function markSent(id: string, notes: string, userId: string): void {
+  completeTask(id, notes, userId, 'sent')
 }
 
 export function cancelTask(id: string, reason: string): void {
@@ -502,4 +578,31 @@ export function updateOffer(id: string, patch: Partial<Offer>, userId: string): 
     }
     return { ...db, offers, interactions }
   })
+}
+
+export function addImportHistory(entry: {
+  source: string
+  newCount: number
+  updatedCount: number
+  skippedCount: number
+  errorCount: number
+  notes: string
+}): void {
+  updateDb((db) => ({
+    ...db,
+    importHistory: [
+      {
+        id: uid('ih_'),
+        orgId: db.organization.id,
+        source: entry.source,
+        importedAt: nowIso(),
+        newCount: entry.newCount,
+        updatedCount: entry.updatedCount,
+        skippedCount: entry.skippedCount,
+        errorCount: entry.errorCount,
+        notes: entry.notes,
+      },
+      ...db.importHistory,
+    ].slice(0, 100),
+  }))
 }

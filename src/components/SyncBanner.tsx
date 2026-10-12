@@ -39,10 +39,23 @@ export default function SyncBanner() {
   useEffect(() => {
     if (started.current) return
     started.current = true
-    if (isSyncDue()) {
-      setVisible(true)
-      setMessage(`Last sync: ${formatLastSync(getLastSync())}. Checking for new properties…`)
-      void runSync()
+    const due = isSyncDue()
+    if (due) {
+      const t = window.setTimeout(() => {
+        setVisible(true)
+        setMessage(`Last sync: ${formatLastSync(getLastSync())}. Checking for new properties…`)
+        void runSync()
+      }, 0)
+      const interval = window.setInterval(() => {
+        if (isSyncDue()) {
+          setVisible(true)
+          void runSync()
+        }
+      }, 6 * 60 * 60 * 1000)
+      return () => {
+        window.clearTimeout(t)
+        window.clearInterval(interval)
+      }
     }
     const interval = window.setInterval(() => {
       if (isSyncDue()) {

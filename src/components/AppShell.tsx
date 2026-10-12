@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { cx, isFirst } from "@/lib/format";
-import { Badge, Button, Card, PageHeader } from "@/components/ui";
+import { useRouter } from "next/navigation";
+import { isFirst } from "@/lib/format";
 import SyncBanner from "@/components/SyncBanner";
 
 interface AppShellProps {
@@ -29,82 +28,18 @@ interface AppShellProps {
   overdueCount: number;
   isOwner: boolean;
   nav: (onClick?: () => void) => ReactNode;
-  refresh: () => Promise<void>;
-}
-
-const NAV = [
-  { href: "/", label: "Dashboard", icon: "M3 12l9-8 9 8M5 10v10h5v-6h4v6h5V10" },
-  { href: "/properties", label: "Properties", icon: "M3 10.5L12 3l9 7.5M5 9.5V21h14V9.5" },
-  { href: "/buyers", label: "Buyers", icon: "M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" },
-  { href: "/follow-ups", label: "Follow-Ups", icon: "M12 8v4l2.5 2.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" },
-  { href: "/offers", label: "Offers", icon: "M12 8c-2 0-4 1.5-4 4s2 4 4 4c3 0 4-2 7-2M4 10h2m-2 4h2m-2 12h2" },
-  { href: "/activity", label: "Activity Log", icon: "M4 6h16M4 12h16M4 18h7" },
-  { href: "/reports", label: "Reports", icon: "M4 20V10m6 10V4m6 16v-7m4 7H2" },
-];
-
-function NavLink({
-  href,
-  label,
-  icon,
-  active,
-  badge,
-  onClick,
-}: {
-  href: string;
-  label: string;
-  icon: string;
-  active: boolean;
-  badge?: number;
-  onClick?: () => void;
-}) {
-  return (
-    <Link
-      href={href}
-      onClick={onClick}
-      className={cx(
-        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-        active
-          ? "bg-slate-900 text-white"
-          : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
-      )}
-    >
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-        <path d={icon} />
-      </svg>
-      <span className="flex-1">{label}</span>
-      {badge !== undefined && badge > 0 && (
-        <span
-          className={cx(
-            "rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
-            active ? "bg-white/20 text-white" : "bg-rose-100 text-rose-700",
-          )}
-        >
-          {badge}
-        </span>
-      )}
-    </Link>
-  );
 }
 
 export default function AppShell({
   children,
   user,
   kpis,
-  alerts,
-  overdueCount,
   isOwner,
   nav,
-  refresh,
 }: AppShellProps) {
-  const pathname = usePathname();
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
-
-  useEffect(() => {
-    setMenuOpen(false);
-    setUserMenu(false);
-  }, [pathname]);
 
   return (
     <div className="flex min-h-screen bg-slate-50">

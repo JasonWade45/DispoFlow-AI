@@ -1,6 +1,6 @@
 "use client"
 
-import { importPropertiesBulk, updateProperty } from "@/lib/actions"
+import { addImportHistory, importPropertiesBulk, updateProperty } from "@/lib/actions"
 import { getDb } from "@/lib/store"
 import type { Property } from "@/types"
 
@@ -49,7 +49,7 @@ const STREET_SUFFIXES = new Set([
 ])
 const DIRECTIONALS = new Set(["n", "s", "e", "w", "ne", "nw", "se", "sw", "north", "south", "east", "west"])
 
-function parseAddressParts(full: string): { address: string; city: string; state: string; zip: string } | null {
+export function parseAddressParts(full: string): { address: string; city: string; state: string; zip: string } | null {
   const parts = full.split(",").map((s) => s.trim()).filter(Boolean)
   if (parts.length >= 3) {
     const stateZip = parts[parts.length - 1].split(" ").filter(Boolean)
@@ -186,6 +186,20 @@ export async function runElevateRegSync(
       marketingStartedAt: null,
       expectedClosingDate: null,
       notes: `Source: ${card.url}${card.image ? `\nImage: ${card.image}` : ""}`,
+      propertyType: "",
+      bedrooms: "",
+      bathrooms: "",
+      sqft: "",
+      lotSize: "",
+      yearBuilt: "",
+      listingUrl: card.url,
+      photosUrl: card.image,
+      sourceWebsite: "elevatereg.com",
+      sourcePropertyId: card.url.split("/property/")[1]?.replace(/\/$/, "") ?? "",
+      sourceRowId: "",
+      firstImportedAt: ts,
+      lastSyncedAt: ts,
+      syncStatus: "synced" as const,
     })
   }
   if (rows.length > 0) {
@@ -214,11 +228,20 @@ export async function runElevateRegSync(
       })
       const detail = await detailRes.json()
       if (detailRes.ok) {
-        const d = detail.property ?? {}
+        const d = (detail.property ?? {}) as {
+          comps?: Array<{ address?: string; soldPrice?: number | string }>
+          arv?: unknown
+          estimatedRepairs?: unknown
+          askingPrice?: unknown
+          accessType?: string
+          specs?: { bedrooms?: string; bathrooms?: string; sqft?: string; lotSize?: string; yearBuilt?: string }
+          images?: string[]
+          financingNote?: string
+        }
         const compsLine =
           Array.isArray(d.comps) && d.comps.length > 0
             ? `\nComps: ${d.comps
-                .map((c: any) => `${c.address} — $${Number(c.soldPrice || 0).toLocaleString("en-US")}`)
+                .map((c) => `${c.address} — $${Number(c.soldPrice || 0).toLocaleString("en-US")}`)
                 .join("; ")}`
             : ""
         updateProperty(p.id, {
@@ -226,6 +249,14 @@ export async function runElevateRegSync(
           estimatedRepairs: toNumber(d.estimatedRepairs) ?? p.estimatedRepairs,
           askingPrice: toNumber(d.askingPrice) ?? p.askingPrice,
           accessType: d.accessType || p.accessType,
+          bedrooms: d.specs?.bedrooms || p.bedrooms,
+          bathrooms: d.specs?.bathrooms || p.bathrooms,
+          sqft: d.specs?.sqft || p.sqft,
+          lotSize: d.specs?.lotSize || p.lotSize,
+          yearBuilt: d.specs?.yearBuilt || p.yearBuilt,
+          photosUrl: d.images?.[0] || p.photosUrl,
+          lastSyncedAt: new Date().toISOString(),
+          syncStatus: "synced" as const,
           notes: [p.notes, d.financingNote ? `Financing: ${d.financingNote}` : "", compsLine]
             .filter(Boolean)
             .join("\n"),
@@ -242,6 +273,14 @@ export async function runElevateRegSync(
   }
 
   setLastSync()
+  addImportHistory({
+    source: "elevatereg.com",
+    newCount: result.imported,
+    updatedCount: result.enriched,
+    skippedCount: result.skipped,
+    errorCount: result.failed,
+    notes: formatSyncSummary(result),
+  })
   onProgress?.({ phase: "done", done: 0, total: 0 })
   return result
 }

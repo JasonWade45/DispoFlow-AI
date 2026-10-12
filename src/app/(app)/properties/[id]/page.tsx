@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import type { Direction, Property } from "@/types";
 import { useDb, useSession } from "@/lib/store";
 import {
   buyerById,
+  interactionsForPair,
   interactionsForProperty,
   nextTaskForPair,
   offersForProperty,
@@ -44,6 +45,14 @@ const DIRECTION_META: Record<Direction, { label: string; tone: string }> = {
   system: { label: "System", tone: "text-slate-500" },
 };
 
+const SYNC_TONES: Record<string, string> = {
+  never: "bg-slate-100 text-slate-600",
+  synced: "bg-emerald-100 text-emerald-700",
+  pending: "bg-amber-100 text-amber-700",
+  error: "bg-rose-100 text-rose-700",
+  conflict: "bg-orange-100 text-orange-700",
+};
+
 export default function PropertyDetailPage() {
   const db = useDb();
   const { id } = useParams<{ id: string }>();
@@ -68,13 +77,19 @@ export default function PropertyDetailPage() {
     );
   }
 
-  return <PropertyDetail key={property.id} property={property} />;
+  return (
+    <Suspense fallback={<Card><p className="px-4 py-6 text-center text-sm text-slate-400">Loading…</p></Card>}>
+      <PropertyDetail key={property.id} property={property} />
+    </Suspense>
+  );
 }
 
 function PropertyDetail({ property }: { property: Property }) {
   const db = useDb();
   const session = useSession();
   const modals = useModals();
+  const searchParams = useSearchParams();
+  const focusBuyerId = searchParams.get("buyer");
 
   const [info, setInfo] = useState(() => ({
     address: property.address,
@@ -88,12 +103,21 @@ function PropertyDetail({ property }: { property: Property }) {
     assignmentPrice: property.assignmentPrice === null ? "" : String(property.assignmentPrice),
     marketingStartedAt: property.marketingStartedAt ? property.marketingStartedAt.slice(0, 10) : "",
     expectedClosingDate: property.expectedClosingDate ? property.expectedClosingDate.slice(0, 10) : "",
+    propertyType: property.propertyType ?? "",
+    bedrooms: property.bedrooms ?? "",
+    bathrooms: property.bathrooms ?? "",
+    sqft: property.sqft ?? "",
+    lotSize: property.lotSize ?? "",
+    yearBuilt: property.yearBuilt ?? "",
+    listingUrl: property.listingUrl ?? "",
+    photosUrl: property.photosUrl ?? "",
   }));
   const [notes, setNotes] = useState(property.notes);
   const [infoSaved, setInfoSaved] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [statusValue, setStatusValue] = useState(property.status);
+  const [historyTab, setHistoryTab] = useState<string>(focusBuyerId ?? "all");
 
   useEffect(() => {
     if (!infoSaved) return;
@@ -125,6 +149,14 @@ function PropertyDetail({ property }: { property: Property }) {
       assignmentPrice: parseMoney(info.assignmentPrice),
       marketingStartedAt: info.marketingStartedAt || null,
       expectedClosingDate: info.expectedClosingDate || null,
+      propertyType: info.propertyType,
+      bedrooms: info.bedrooms,
+      bathrooms: info.bathrooms,
+      sqft: info.sqft,
+      lotSize: info.lotSize,
+      yearBuilt: info.yearBuilt,
+      listingUrl: info.listingUrl,
+      photosUrl: info.photosUrl,
     });
     setInfoSaved(true);
   }
@@ -148,7 +180,8 @@ function PropertyDetail({ property }: { property: Property }) {
   const offers = offersForProperty(db, property.id).sort(
     (a, b) => b.offerDate.localeCompare(a.offerDate) || b.createdAt.localeCompare(a.createdAt),
   );
-  const interactions = interactionsForProperty(db, property.id);
+  const allInteractions = interactionsForProperty(db, property.id);
+  const hasSource = property.listingUrl || property.sourceWebsite || property.photosUrl;
 
   return (
     <div>
@@ -214,6 +247,63 @@ function PropertyDetail({ property }: { property: Property }) {
         </Field>
       </Modal>
 
+      {hasSource && (
+        <Card className="mb-5">
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-semibold text-slate-800">Source & Sync</h2>
+          </div>
+          <div className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            {property.listingUrl && (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Listing</p>
+                <a
+                  href={property.listingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 block truncate text-sm font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+                >
+                  {property.listingUrl.replace(/^https?:\/\//, "").slice(0, 40)}…
+                </a>
+              </div>
+            )}
+            {property.photosUrl && (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Photos</p>
+                <a
+                  href={property.photosUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 block truncate text-sm font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+                >
+                  View gallery →
+                </a>
+              </div>
+            )}
+            {property.sourceWebsite && (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Source</p>
+                <p className="mt-1 text-sm text-slate-700">{property.sourceWebsite}</p>
+              </div>
+            )}
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Sync Status</p>
+              <div className="mt-1 flex items-center gap-2">
+                <span
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${SYNC_TONES[property.syncStatus ?? "never"] ?? SYNC_TONES.never}`}
+                >
+                  {property.syncStatus ?? "never"}
+                </span>
+                {property.lastSyncedAt && (
+                  <span className="text-xs text-slate-400">
+                    {relativeTime(property.lastSyncedAt)}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
       <div className="grid gap-5 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <div className="border-b border-slate-100 px-4 py-3">
@@ -274,6 +364,30 @@ function PropertyDetail({ property }: { property: Property }) {
                   onChange={setInfoField("assignmentPrice")}
                   placeholder="20000"
                 />
+              </Field>
+              <Field label="Property Type">
+                <Input value={info.propertyType} onChange={setInfoField("propertyType")} placeholder="Single Family" />
+              </Field>
+              <Field label="Bedrooms">
+                <Input value={info.bedrooms} onChange={setInfoField("bedrooms")} placeholder="3" />
+              </Field>
+              <Field label="Bathrooms">
+                <Input value={info.bathrooms} onChange={setInfoField("bathrooms")} placeholder="1.5" />
+              </Field>
+              <Field label="Sq Ft">
+                <Input value={info.sqft} onChange={setInfoField("sqft")} placeholder="1,128" />
+              </Field>
+              <Field label="Lot Size">
+                <Input value={info.lotSize} onChange={setInfoField("lotSize")} placeholder="0.90 acres" />
+              </Field>
+              <Field label="Year Built">
+                <Input value={info.yearBuilt} onChange={setInfoField("yearBuilt")} placeholder="1962" />
+              </Field>
+              <Field label="Listing URL" className="sm:col-span-2">
+                <Input value={info.listingUrl} onChange={setInfoField("listingUrl")} placeholder="https://..." />
+              </Field>
+              <Field label="Photos URL" className="sm:col-span-2">
+                <Input value={info.photosUrl} onChange={setInfoField("photosUrl")} placeholder="https://..." />
               </Field>
               <Field label="Marketing Started">
                 <Input
@@ -337,10 +451,8 @@ function PropertyDetail({ property }: { property: Property }) {
               <thead>
                 <tr className="border-b border-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-500">
                   <th className="px-4 py-3 font-medium">Buyer</th>
-                  <th className="px-4 py-3 font-medium">Buyer Status</th>
                   <th className="px-4 py-3 font-medium">Interest Status</th>
-                  <th className="px-4 py-3 font-medium">Offer Amount</th>
-                  <th className="px-4 py-3 font-medium">Last Interaction</th>
+                  <th className="px-4 py-3 font-medium">Last Message Sent</th>
                   <th className="px-4 py-3 font-medium">Next Follow-Up</th>
                   <th className="px-4 py-3 font-medium">Next Action</th>
                   <th className="px-4 py-3 font-medium" />
@@ -359,7 +471,10 @@ function PropertyDetail({ property }: { property: Property }) {
                   const nextTask = nextTaskForPair(db, r.buyerId, r.propertyId);
                   const followUp = nextTask?.dueDate ?? r.nextFollowUpDate;
                   return (
-                    <tr key={r.id} className="transition-colors hover:bg-slate-50">
+                    <tr
+                      key={r.id}
+                      className={`transition-colors hover:bg-slate-50 ${focusBuyerId === r.buyerId ? "bg-indigo-50" : ""}`}
+                    >
                       <td className="px-4 py-3">
                         <Link
                           href={`/buyers/${r.buyerId}`}
@@ -367,18 +482,17 @@ function PropertyDetail({ property }: { property: Property }) {
                         >
                           {buyer?.fullName ?? "Unknown buyer"}
                         </Link>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge label={buyer?.status ?? "—"} />
+                        {pairOffers.length > 0 && (
+                          <p className="mt-0.5 text-xs text-slate-400">
+                            {formatMoney(pairOffers[0].amount)} offer
+                          </p>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <Badge label={r.interestStatus} />
                       </td>
-                      <td className="px-4 py-3 text-slate-700">
-                        {formatMoney(pairOffers[0]?.amount)}
-                      </td>
                       <td className="px-4 py-3 text-slate-600">
-                        {r.lastInteractionDate ? relativeTime(r.lastInteractionDate) : "—"}
+                        {r.lastMessageSentAt ? relativeTime(r.lastMessageSentAt) : "—"}
                       </td>
                       <td className="px-4 py-3 text-slate-600">{formatDate(followUp)}</td>
                       <td className="max-w-[14rem] truncate px-4 py-3 text-slate-600">
@@ -489,82 +603,109 @@ function PropertyDetail({ property }: { property: Property }) {
       </Card>
 
       <Card className="mt-5">
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-          <h2 className="text-sm font-semibold text-slate-800">Activity Timeline</h2>
-          <span className="text-xs text-slate-400">{interactions.length} events</span>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-800">Communication History</h2>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400">{allInteractions.length} events</span>
+            <Select
+              value={historyTab}
+              onChange={(e) => setHistoryTab(e.target.value)}
+              className="w-48"
+              aria-label="Filter by buyer"
+            >
+              <option value="all">All buyers</option>
+              {relationships.map((r) => {
+                const b = buyerById(db, r.buyerId);
+                return (
+                  <option key={r.buyerId} value={r.buyerId}>
+                    {b?.fullName ?? r.buyerId}
+                  </option>
+                );
+              })}
+            </Select>
+          </div>
         </div>
-        {interactions.length === 0 ? (
-          <EmptyState
-            title="No activity yet"
-            body="Log an interaction to start the timeline for this property."
-            action={
-              <Button onClick={() => modals.logInteraction({ propertyId: property.id })}>
-                Log Interaction
-              </Button>
-            }
-          />
-        ) : (
-          <ul className="divide-y divide-slate-100">
-            {interactions.map((i) => {
-              const buyer = buyerById(db, i.buyerId);
-              const meta = DIRECTION_META[i.direction];
-              const occurredMs = Date.parse(i.occurredAt);
-              const recordedMs = Date.parse(i.recordedAt);
-              const showLogged =
-                Number.isFinite(occurredMs) &&
-                Number.isFinite(recordedMs) &&
-                Math.abs(recordedMs - occurredMs) > 60000;
-              return (
-                <li key={i.id} className="flex gap-3 px-4 py-3">
-                  <DirectionIcon direction={i.direction} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className={`text-[11px] font-semibold uppercase tracking-wide ${meta.tone}`}
-                      >
-                        {meta.label}
-                      </span>
-                      <Badge label={i.eventType} />
-                      {buyer && i.buyerId && (
-                        <Link
-                          href={`/buyers/${i.buyerId}`}
-                          className="text-xs font-medium text-slate-500 hover:text-slate-800"
+        {(() => {
+          const filtered =
+            historyTab === "all"
+              ? allInteractions
+              : interactionsForPair(db, historyTab, property.id);
+          if (filtered.length === 0) {
+            return (
+              <EmptyState
+                title="No activity yet"
+                body="Log an interaction to start the timeline for this property."
+                action={
+                  <Button onClick={() => modals.logInteraction({ propertyId: property.id })}>
+                    Log Interaction
+                  </Button>
+                }
+              />
+            );
+          }
+          return (
+            <ul className="divide-y divide-slate-100">
+              {filtered.map((i) => {
+                const buyer = buyerById(db, i.buyerId);
+                const meta = DIRECTION_META[i.direction];
+                const occurredMs = Date.parse(i.occurredAt);
+                const recordedMs = Date.parse(i.recordedAt);
+                const showLogged =
+                  Number.isFinite(occurredMs) &&
+                  Number.isFinite(recordedMs) &&
+                  Math.abs(recordedMs - occurredMs) > 60000;
+                return (
+                  <li key={i.id} className="flex gap-3 px-4 py-3">
+                    <DirectionIcon direction={i.direction} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`text-[11px] font-semibold uppercase tracking-wide ${meta.tone}`}
                         >
-                          {buyer.fullName}
-                        </Link>
-                      )}
-                      {i.potentialOfferAmount !== null && (
-                        <Badge
-                          label={`Mentioned: ${formatMoney(i.potentialOfferAmount)} (unconfirmed)`}
-                        />
-                      )}
-                    </div>
-                    <p className="mt-1.5 whitespace-pre-wrap text-sm text-slate-800">
-                      {i.originalContent}
-                    </p>
-                    {i.enhancedNotes && (
-                      <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-500">
-                          AI Enhanced
-                        </p>
-                        <p className="mt-1 text-sm text-indigo-900">{i.enhancedNotes}</p>
-                        {i.outcome && (
-                          <p className="mt-1 text-xs text-indigo-700">Outcome: {i.outcome}</p>
+                          {meta.label}
+                        </span>
+                        <Badge label={i.eventType} />
+                        {buyer && i.buyerId && (
+                          <Link
+                            href={`/buyers/${i.buyerId}`}
+                            className="text-xs font-medium text-slate-500 hover:text-slate-800"
+                          >
+                            {buyer.fullName}
+                          </Link>
+                        )}
+                        {i.potentialOfferAmount !== null && (
+                          <Badge
+                            label={`Mentioned: ${formatMoney(i.potentialOfferAmount)} (unconfirmed)`}
+                          />
                         )}
                       </div>
-                    )}
-                    <p className="mt-1.5 text-xs text-slate-400">
-                      Occurred {formatDateTime(i.occurredAt)}
-                      {showLogged && (
-                        <span> · logged {formatDateTime(i.recordedAt)}</span>
+                      <p className="mt-1.5 whitespace-pre-wrap text-sm text-slate-800">
+                        {i.originalContent}
+                      </p>
+                      {i.enhancedNotes && (
+                        <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-500">
+                            AI Enhanced
+                          </p>
+                          <p className="mt-1 text-sm text-indigo-900">{i.enhancedNotes}</p>
+                          {i.outcome && (
+                            <p className="mt-1 text-xs text-indigo-700">Outcome: {i.outcome}</p>
+                          )}
+                        </div>
                       )}
-                    </p>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+                      <p className="mt-1.5 text-xs text-slate-400">
+                        Occurred {formatDateTime(i.occurredAt)}
+                        {showLogged && (
+                          <span> · logged {formatDateTime(i.recordedAt)}</span>
+                        )}
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          );
+        })()}
       </Card>
     </div>
   );

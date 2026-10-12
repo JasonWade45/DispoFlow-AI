@@ -21,7 +21,15 @@ export function formatMoneyShort(value: number | null | undefined): string {
 }
 
 export function parseMoney(input: string): number | null {
-  const cleaned = input.replace(/[^0-9.\-]/g, "");
+  const trimmed = input.trim().toLowerCase();
+  if (!trimmed) return null;
+  const suffixMatch = trimmed.match(/^([0-9]*\.?[0-9]+)\s*([km])$/);
+  if (suffixMatch) {
+    const base = Number(suffixMatch[1]);
+    if (!Number.isFinite(base)) return null;
+    return Math.round(base * (suffixMatch[2] === "k" ? 1000 : 1000000));
+  }
+  const cleaned = trimmed.replace(/[^0-9.\-]/g, "");
   if (!cleaned) return null;
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;

@@ -29,6 +29,8 @@ export type PropertyStatus =
 
 export type AccessType = "Appointments" | "Lockbox" | "Open" | "";
 
+export type SyncStatus = "never" | "synced" | "pending" | "error" | "conflict";
+
 export interface Property {
   id: ID;
   orgId: ID;
@@ -48,6 +50,20 @@ export interface Property {
   createdAt: string;
   updatedAt: string;
   createdBy: ID;
+  propertyType: string;
+  bedrooms: string;
+  bathrooms: string;
+  sqft: string;
+  lotSize: string;
+  yearBuilt: string;
+  listingUrl: string;
+  photosUrl: string;
+  sourceWebsite: string;
+  sourcePropertyId: string;
+  sourceRowId: string;
+  firstImportedAt: string | null;
+  lastSyncedAt: string | null;
+  syncStatus: SyncStatus;
 }
 
 export type BuyerStatus = "Active" | "Inactive" | "Do Not Contact";
@@ -103,6 +119,11 @@ export interface BuyerProperty {
   relationshipStatus: RelationshipStatus;
   createdAt: string;
   updatedAt: string;
+  lastContactedAt: string | null;
+  lastMessageSentAt: string | null;
+  lastCallAt: string | null;
+  syncStatus: SyncStatus;
+  sourceRowId: string;
 }
 
 export type InteractionType =
@@ -153,6 +174,8 @@ export type TaskStatus =
 
 export type Priority = "Low" | "Medium" | "High" | "Urgent";
 
+export type CompletionVia = "sent" | "complete" | "cancelled" | null;
+
 export interface Task {
   id: ID;
   orgId: ID;
@@ -169,6 +192,8 @@ export interface Task {
   completionNotes: string;
   createdAt: string;
   completedAt: string | null;
+  completedVia: CompletionVia;
+  sentAt: string | null;
 }
 
 export type OfferStatus =
@@ -207,6 +232,55 @@ export interface Settings {
   priorityRulesEnabled: boolean;
 }
 
+export type FieldSource = "app" | "sheet" | "newest";
+
+export interface ColumnMapping {
+  logicalField: string;
+  columnLetter: string;
+  headerName: string;
+  source: FieldSource;
+}
+
+export interface SheetConnection {
+  id: ID;
+  orgId: ID;
+  spreadsheetId: string;
+  spreadsheetName: string;
+  worksheetName: string;
+  isConnected: boolean;
+  lastSyncAt: string | null;
+  lastSyncStatus: SyncStatus;
+  lastSyncError: string | null;
+  columnMappings: ColumnMapping[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ImportHistoryEntry {
+  id: ID;
+  orgId: ID;
+  source: string;
+  importedAt: string;
+  newCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  errorCount: number;
+  notes: string;
+}
+
+export interface SyncJob {
+  id: ID;
+  orgId: ID;
+  connectionId: ID;
+  startedAt: string;
+  completedAt: string | null;
+  status: "running" | "success" | "error" | "cancelled";
+  pulledCount: number;
+  pushedCount: number;
+  errorCount: number;
+  errorMessage: string | null;
+}
+
 export interface DB {
   version: number;
   organization: Organization;
@@ -218,6 +292,9 @@ export interface DB {
   tasks: Task[];
   offers: Offer[];
   settings: Settings;
+  sheetConnections: SheetConnection[];
+  importHistory: ImportHistoryEntry[];
+  syncJobs: SyncJob[];
 }
 
 export interface Session {

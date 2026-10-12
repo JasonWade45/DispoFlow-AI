@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 import type { Task } from "@/types";
-import { cancelTask, updateTask } from "@/lib/actions";
+import { cancelTask, markSent, updateTask } from "@/lib/actions";
 import { cx, formatDate, formatTime } from "@/lib/format";
 import { buyerById, propertyById, sortTasksByPriority, taskStatus, userById } from "@/lib/selectors";
-import { useDb } from "@/lib/store";
+import { useDb, useSession } from "@/lib/store";
 import { useModals } from "@/components/modals/ModalHost";
 import {
   Badge,
@@ -44,6 +44,7 @@ const SUMMARY = [
 function FollowUps() {
   const searchParams = useSearchParams();
   const db = useDb();
+  const session = useSession();
   const modals = useModals();
   const tabParam = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState(() =>
@@ -198,6 +199,13 @@ function FollowUps() {
             const property = propertyById(db, task.propertyId);
             const assigneeName = userById(db, task.assignedUserId)?.name ?? "Unassigned";
             const done = task.status === "Completed" || task.status === "Cancelled";
+            const isMessage = task.taskType.toLowerCase().includes("message");
+            const propertyHref =
+              task.propertyId && task.buyerId
+                ? `/properties/${task.propertyId}?buyer=${task.buyerId}`
+                : task.propertyId
+                  ? `/properties/${task.propertyId}`
+                  : null;
             return (
               <li
                 key={task.id}
@@ -210,8 +218,17 @@ function FollowUps() {
                       <Badge label={task.priority} />
                     )}
                     <span className="text-xs text-slate-400">{task.taskType}</span>
+                    {task.completedVia === "sent" && <Badge label="Sent" />}
                   </div>
-                  <p className="mt-1 text-sm text-slate-800">{task.description}</p>
+                  <p className="mt-1 text-sm text-slate-800">
+                    {propertyHref ? (
+                      <Link href={propertyHref} className="hover:text-slate-950 hover:underline">
+                        {task.description}
+                      </Link>
+                    ) : (
+                      task.description
+                    )}
+                  </p>
                   <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-400">
                     {buyer ? (
                       <Link
@@ -223,11 +240,12 @@ function FollowUps() {
                     ) : (
                       <span>No buyer</span>
                     )}
-                    {property && (
-                      <Link href={`/properties/${property.id}`} className="hover:text-slate-700">
+                    {property && propertyHref && (
+                      <Link href={propertyHref} className="hover:text-slate-700">
                         {property.address}
                       </Link>
                     )}
+                    {property && !propertyHref && <span>{property.address}</span>}
                     <span>
                       {task.dueDate
                         ? `Due ${formatDate(task.dueDate)}${
@@ -235,6 +253,7 @@ function FollowUps() {
                           }`
                         : "No date"}
                     </span>
+                    {task.sentAt && <span>Sent {formatDate(task.sentAt.slice(0, 10))}</span>}
                     <span>{assigneeName}</span>
                   </p>
                   {done && task.completionNotes && (
@@ -254,6 +273,16 @@ function FollowUps() {
                   >
                     Message
                   </Button>
+                  {!done && isMessage && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => markSent(task.id, "Message sent", session.userId ?? "u_sarah")}
+                      title="Mark as sent — records the send timestamp"
+                    >
+                      Mark Sent
+                    </Button>
+                  )}
                   {!done && (
                     <>
                       <Button

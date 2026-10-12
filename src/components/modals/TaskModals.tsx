@@ -156,6 +156,7 @@ export function CompleteTaskModal({
   const session = useSession();
   const [notes, setNotes] = useState("");
   const [createNext, setCreateNext] = useState(true);
+  const [completionMode, setCompletionMode] = useState<"complete" | "sent">("complete");
   const [nextDate, setNextDate] = useState(addDaysIso(2));
   const [nextTime, setNextTime] = useState("10:00");
   const [nextDesc, setNextDesc] = useState(() =>
@@ -168,10 +169,11 @@ export function CompleteTaskModal({
   if (!task) return null;
   const buyer = buyerById(db, task.buyerId);
   const property = propertyById(db, task.propertyId);
+  const isMessageTask = task.taskType.toLowerCase().includes("message");
 
   function submit() {
     if (!task) return;
-    completeTask(task.id, notes.trim(), session.userId ?? "u_sarah");
+    completeTask(task.id, notes.trim(), session.userId ?? "u_sarah", completionMode);
     if (createNext && nextDesc.trim()) {
       createTask({
         buyerId: task.buyerId,
@@ -201,7 +203,9 @@ export function CompleteTaskModal({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={submit}>Complete</Button>
+          <Button onClick={submit}>
+            {completionMode === "sent" ? "Mark Sent" : "Complete"}
+          </Button>
         </>
       }
     >
@@ -216,14 +220,51 @@ export function CompleteTaskModal({
           <p className="mt-2 text-slate-700">{task.description}</p>
         </div>
 
-        <Field label="Result / Completion Notes">
+        <Field label={completionMode === "sent" ? "What was sent?" : "Result / Completion Notes"}>
           <Textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="What did the buyer say? What was the outcome?"
+            placeholder={
+              completionMode === "sent"
+                ? "Paste the message content or note what was sent…"
+                : "What did the buyer say? What was the outcome?"
+            }
             className="min-h-24"
           />
         </Field>
+
+        {isMessageTask && (
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-slate-600">How was this handled?</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCompletionMode("sent")}
+                className={
+                  completionMode === "sent"
+                    ? "rounded-lg border border-slate-800 bg-slate-800 px-3 py-1.5 text-xs font-medium text-white"
+                    : "rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300"
+                }
+              >
+                Message sent
+              </button>
+              <button
+                type="button"
+                onClick={() => setCompletionMode("complete")}
+                className={
+                  completionMode === "complete"
+                    ? "rounded-lg border border-slate-800 bg-slate-800 px-3 py-1.5 text-xs font-medium text-white"
+                    : "rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300"
+                }
+              >
+                Completed another way
+              </button>
+            </div>
+            <p className="mt-1.5 text-[11px] text-slate-400">
+              &quot;Message sent&quot; records the send timestamp on the buyer relationship.
+            </p>
+          </div>
+        )}
 
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input
