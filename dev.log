@@ -12,3 +12,21 @@
 - Partial Prefetching enabled
 
 ○ Compiling / ...
+ GET / 200 in 1178ms (next.js: 566ms, application-code: 612ms)
+ GET /login 200 in 253ms (next.js: 21ms, application-code: 232ms)
+Error: Route "/": Could not validate that a segment in your UI has instant navigation.
+
+This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+
+Dropped segment:
+  src/app/(app)/page.tsx
+
+Ways to fix this:
+  - [render] Render the dropped segment
+  - [ignore] Set `export const instant = false` to opt the dropped segment out of instant-navigation validation
+
+Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+    at ignore-listed frames
+ POST /api/auth 404 in 1546ms (next.js: 1443ms, application-code: 103ms)
+ POST /api/auth 404 in 144ms (next.js: 20ms, application-code: 124ms)
+ POST /api/auth 404 in 110ms (next.js: 25ms, application-code: 86ms)
