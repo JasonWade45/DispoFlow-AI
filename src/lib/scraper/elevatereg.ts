@@ -1,7 +1,5 @@
 // src/lib/scraper/elevatereg.ts
-// Server-only scraper for ElevateReg.com
-
-import { JSDOM } from 'jsdom'
+// Server-only scraper for ElevateReg.com (regex-based, no JSDOM)
 
 export interface ScrapedProperty {
   address: string
@@ -33,21 +31,33 @@ export interface ScrapedProperty {
 }
 
 async function fetchHtml(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
-    },
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
-  return res.text()
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 25000)
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+      },
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+    return await res.text()
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 function parsePrice(text: string): number | null {
-  const match = text.match(/\$?([\d,]+)/)
+  const match = text.match(/\$?([\d,]{4,})/)
   if (!match) return null
-  return parseInt(match[1].replace(/,/g, ''), 10)
+  const n = parseInt(match[1].replace(/,/g, ''), 10)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+function stripTags(html: string): string {
+  return html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim()
 }
 
 function parseAddress(fullAddress: string): { address: string; city: string; state: string; zip: string } | null {
@@ -56,115 +66,90 @@ function parseAddress(fullAddress: string): { address: string; city: string; sta
   const address = parts[0]
   const city = parts[1]
   const stateZip = parts[2].split(' ')
-  const state = stateZip[0]
-  const zip = stateZip.slice(1).join(' ')
-  return { address, city, state, zip }
+  return { address, city, state: stateZip[0], zip: stateZip.slice(1).join(' ') }
 }
 
-function extractSpecs(doc: Document): ScrapedProperty['specs'] {
-  const specs: ScrapedProperty['specs'] = {
-    bedrooms: '',
-    bathrooms: '',
-    sqft: '',
-    lotSize: '',
-    yearBuilt: '',
-    propertyType: '',
-    terms: '',
+function extractAll(re: RegExp, text: string): string[] {
+  const out: string[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    out.push(m[1])
+    if (m.index === re.lastIndex) re.lastIndex++
   }
-
-  const text = doc.body.textContent || ''
-  
-  const patterns = {
-    bedrooms: /(\d+)\s*(?:bd|bed|bedroom)/i,
-    bathrooms: /(\d+(?:\.\d+)?)\s*(?:ba|bath|bathroom)/i,
-    sqft: /([\d,]+)\s*sqft/i,
-    lotSize: /([\d.]+)\s*acres?/i,
-    yearBuilt: /(?:Year Built|Built in)\s*:?\s*(\d{4})/i,
-    propertyType: /Property Type\s*:?\s*([^\n]+)/i,
-    terms: /Terms\s*:?\s*([^\n]+)/i,
-  }
-
-  for (const [key, pattern] of Object.entries(patterns)) {
-    const match = text.match(pattern)
-    if (match) specs[key as keyof typeof specs] = match[1]?.trim() || ''
-  }
-
-  return specs
+  return out
 }
 
 export async function scrapeElevateRegProperty(url: string): Promise<ScrapedProperty> {
   const html = await fetchHtml(url)
-  const dom = new JSDOM(html)
-  const doc = dom.window.document
 
-  const h1 = doc.querySelector('h1')
-  const fullAddress = h1?.textContent?.replace(' For Sale', '').trim() || ''
+  // --- Address from <h1 ...>Title</h1>
+  const h1Match = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)
+  const fullAddress = stripTags(h1Match?.[1] ?? '').replace(' For Sale', '').trim()
   const parsedAddress = parseAddress(fullAddress)
-  
-  if (!parsedAddress) throw new Error('Could not parse address')
+  if (!parsedAddress) throw new Error('Could not parse address from page')
 
-  const priceText = doc.querySelector('strong, .lead, b')?.textContent || ''
-  const askingPrice = parsePrice(priceText)
+  // --- Asking price: first "$110,000" in article content
+  const articleMatch = html.match(/<article[\s\S]*?<\/article>/i)
+  const article = articleMatch?.[0] ?? html
+  const priceMatch = article.match(/\$\s?([\d,]{5,})/)
+  const askingPrice = priceMatch ? parsePrice(priceMatch[0]) : null
 
-  const article = doc.querySelector('article')
-  const firstPara = article?.querySelector('p')
-  const description = firstPara?.textContent?.trim() || ''
+  // --- Description: first <p> in article with substantial text
+  const paras = extractAll(/<p[^>]*>([\s\S]*?)<\/p>/gi, article)
+  const description = paras.map(stripTags).find(p => p.length > 60) ?? paras.map(stripTags)[0] ?? ''
 
-  const images: string[] = []
-  const galleryLinks = doc.querySelectorAll('article a[href*="image-cdn.carrot.com"]')
-  galleryLinks.forEach(a => {
-    const href = a.getAttribute('href')
-    if (href && !images.includes(href)) images.push(href)
-  })
-  
-  const contentImages = doc.querySelectorAll('article img')
-  contentImages.forEach(img => {
-    const src = img.getAttribute('src')
-    if (src && src.includes('image-cdn.carrot.com') && !images.includes(src)) {
-      images.push(src)
-    }
-  })
+  // --- Images: carrot CDN links
+  const images = [...new Set(extractAll(/href="(https:\/\/[^"]*image-cdn\.carrot\.com[^"]+)"/gi, html))]
+    .filter(u => /\.(jpe?g|png|webp)/i.test(u))
 
+  // --- Comps: Zillow links (address in link) + "Sold for $X" nearby
   const comps: ScrapedProperty['comps'] = []
-  const compsHeader = Array.from(doc.querySelectorAll('h2, h3, h4, strong, b')).find(
-    el => el.textContent?.toLowerCase().includes('comp')
-  )
-  
-  if (compsHeader) {
-    const compsSection = compsHeader.parentElement
-    if (compsSection) {
-      const links = compsSection.querySelectorAll('a[href*="zillow.com"]')
-      links.forEach(a => {
-        const text = a.textContent?.trim() || ''
-        const soldMatch = text.match(/Sold\s*\$?([\d,]+)/i)
-        if (soldMatch) {
-          comps.push({
-            address: text.replace(/Sold\s*\$?[\d,]+/i, '').trim(),
-            soldPrice: parsePrice(soldMatch[0]),
-            soldDate: '',
-            source: 'Zillow',
-          })
-        }
+  const zillowLinkRe = /<a[^>]*href="(https:\/\/www\.zillow\.com\/homedetails\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi
+  let zm: RegExpExecArray | null
+  while ((zm = zillowLinkRe.exec(html)) !== null) {
+    const address = stripTags(zm[2]).replace(/[^\x20-\x7E]/g, '').replace(/,\s*,/g, ',').trim()
+    if (!address) continue
+    // Look ahead up to 800 chars for "Sold for $X"
+    const after = html.slice(zm.index, zm.index + zm[0].length + 800)
+    const soldMatch = after.match(/Sold\s+for\s*\$?([\d,]+)/i)
+    if (soldMatch) {
+      comps.push({
+        address,
+        soldPrice: parsePrice(soldMatch[1]) ?? 0,
+        soldDate: '',
+        source: 'Zillow',
       })
     }
-
-  const specs = extractSpecs(doc)
-
-  const text = doc.body.textContent || ''
-  const financingMatch = text.match(/WE NOW OFFER LENDING[^.]*/i)
-  const financingNote = financingMatch?.[0]?.trim() || ''
-
-  let arv: number | null = null
-  if (comps.length > 0) {
-    const avgSold = comps.reduce((sum, c) => sum + (c.soldPrice || 0), 0) / comps.length
-    arv = Math.round(avgSold)
   }
 
+  // --- ARV estimate from comps average
+  let arv: number | null = null
+  if (comps.length > 0) {
+    const avg = comps.reduce((s, c) => s + (c.soldPrice || 0), 0) / comps.length
+    arv = Math.round(avg)
+  }
+
+  // --- Specs from labeled lines
+  const plain = stripTags(article)
+  const specs = {
+    bedrooms: plain.match(/(\d+)\s*(?:bd|bed|bedroom)/i)?.[1] ?? '',
+    bathrooms: plain.match(/(\d+(?:\.\d+)?)\s*(?:ba|bath|bathroom)/i)?.[1] ?? '',
+    sqft: plain.match(/([\d,]+)\s*sqft/i)?.[1] ?? '',
+    lotSize: plain.match(/([\d.]+)\s*acres?/i)?.[1] ?? '',
+    yearBuilt: plain.match(/(?:Year Built|Built in)\s*:?\s*(\d{4})/i)?.[1] ?? '',
+    propertyType: plain.match(/Property Type\s*:?\s*([^\n]+)/i)?.[1]?.trim() ?? '',
+    terms: plain.match(/Terms\s*:?\s*([^\n]+)/i)?.[1]?.trim() ?? '',
+  }
+
+  // --- Financing note
+  const financingMatch = html.match(/WE NOW OFFER LENDING[^<]*/i)
+  const financingNote = financingMatch?.[0]?.trim() ?? ''
+
   return {
-    address: parsedAddress!.address,
-    city: parsedAddress!.city,
-    state: parsedAddress!.state,
-    zip: parsedAddress!.zip,
+    address: parsedAddress.address,
+    city: parsedAddress.city,
+    state: parsedAddress.state,
+    zip: parsedAddress.zip,
     askingPrice,
     arv,
     estimatedRepairs: null,
@@ -175,59 +160,4 @@ export async function scrapeElevateRegProperty(url: string): Promise<ScrapedProp
     financingNote,
     companyLink: url,
   }
-}
-
-function parseAddress(fullAddress: string): { address: string; city: string; state: string; zip: string } | null {
-  const parts = fullAddress.split(',').map(s => s.trim())
-  if (parts.length < 3) return null
-  const address = parts[0]
-  const city = parts[1]
-  const stateZip = parts[2].split(' ')
-  const state = stateZip[0]
-  const zip = stateZip.slice(1).join(' ')
-  return { address, city, state, zip }
-}
-
-function extractSpecs(doc: Document): ScrapedProperty['specs'] {
-  const specs: ScrapedProperty['specs'] = {
-    bedrooms: '',
-    bathrooms: '',
-    sqft: '',
-    lotSize: '',
-    yearBuilt: '',
-    propertyType: '',
-    terms: '',
-  }
-
-  const text = doc.body.textContent || ''
-  
-  const patterns = {
-    bedrooms: /(\d+)\s*(?:bd|bed|bedroom)/i,
-    bathrooms: /(\d+(?:\.\d+)?)\s*(?:ba|bath|bathroom)/i,
-    sqft: /([\d,]+)\s*sqft/i,
-    lotSize: /([\d.]+)\s*acres?/i,
-    yearBuilt: /(?:Year Built|Built in)\s*:?\s*(\d{4})/i,
-    propertyType: /Property Type\s*:?\s*([^\n]+)/i,
-    terms: /Terms\s*:?\s*([^\n]+)/i,
-  }
-
-  for (const [key, pattern] of Object.entries(patterns)) {
-    const match = text.match(pattern)
-    if (match) specs[key as keyof typeof specs] = match[1]?.trim() || ''
-  }
-
-  return specs
-}
-
-async function fetchHtml(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
-    },
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
-  return res.text()
-}
 }
