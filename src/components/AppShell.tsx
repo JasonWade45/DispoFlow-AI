@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { isFirst } from "@/lib/format";
 import SyncBanner from "@/components/SyncBanner";
+import SheetSyncBanner from "@/components/SheetSyncBanner";
 
 interface AppShellProps {
   children: ReactNode;
@@ -162,6 +163,7 @@ export default function AppShell({
         </header>
 
         <main className="flex-1 px-4 py-5 sm:px-6 lg:px-8">
+          <SheetSyncBanner />
           <SyncBanner />
           {children}
         </main>

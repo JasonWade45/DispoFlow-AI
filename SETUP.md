@@ -56,7 +56,7 @@ The full integration code is built (OAuth, spreadsheet picker, column auto-mappi
 1. APIs & Services → OAuth consent screen
 2. User type: **External**
 3. Add yourself as a **Test user** (until the app is verified)
-4. Scopes used: `spreadsheets.readonly`, `spreadsheets`, `drive.readonly`
+4. Scopes used (read-only — the app can never modify your sheet): `spreadsheets.readonly`, `drive.readonly`
 
 ### 4. Set env vars and redeploy
 
@@ -64,7 +64,19 @@ Add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` to your Vercel project (Settin
 
 ### 5. Connect
 
-Go to **Settings → Integrations → Google Sheets** in the app, click **Connect Google Account**, pick a spreadsheet and worksheet, review the auto-mapped columns, and import.
+Go to **Settings → Integrations → Google Sheets** in the app, click **Connect Google Account**, pick a spreadsheet and worksheet, review the auto-mapped columns, and click **Sync Now**. Save the mapping first if you adjusted any column assignments.
+
+## Google Sheet Auto-Sync (Sheet → App)
+
+After connecting, the app keeps the system in sync with the sheet automatically:
+
+- **Polling:** the sheet is read every **5 minutes** while the app is open in the browser (plus on tab focus and on demand via **Sync sheet now** in the green banner or **Sync Now** on the settings page). Data lives in browser localStorage, so sync runs in the browser — same model as the ElevateReg sync.
+- **Read-only:** OAuth is requested with `spreadsheets.readonly` + `drive.readonly` only — the sheet is **never modified**.
+- **Merge rules:** non-empty sheet cells win over app values; empty cells leave the app value untouched. Status changes are logged to the Activity Log (and auto-cancel open tasks on Sold/Cancelled, same as manual edits).
+- **New rows** create a property, and — when those columns are mapped — a buyer, buyer-property link, offer (from Offer Amount), and follow-up task (from Next Follow-up Date).
+- **Matching:** normalized address → listing URL → source row id (resilient to rows moving around).
+- **Deleted sheet rows never delete app data** — they are only reported as `missing` in the sync summary.
+- **History:** each sync that changed something is written to Import History and `SyncJob`; the last sync status is shown on the settings page.
 
 ## Daily Property Sync (ElevateReg)
 

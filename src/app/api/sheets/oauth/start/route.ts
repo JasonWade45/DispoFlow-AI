@@ -6,7 +6,6 @@ const REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || `${process.env.NEXT_PUBL
 
 const SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets.readonly',
-  'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/drive.readonly',
 ].join(' ')
 

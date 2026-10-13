@@ -3,9 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { useDb } from "@/lib/store";
 import { updateDb } from "@/lib/store";
-import type { ColumnMapping, Property, SheetConnection } from "@/types";
-import { formatDate } from "@/lib/format";
+import type { ColumnMapping, SheetConnection } from "@/types";
 import { uid } from "@/lib/format";
+import { LOGICAL_FIELDS, autoMap } from "@/lib/sheet-mapping";
+import {
+  formatSheetLastSync,
+  formatSheetSyncSummary,
+  runSheetSync,
+  type SheetSyncProgress,
+} from "@/lib/sheet-sync";
 import {
   Badge,
   Button,
@@ -15,88 +21,6 @@ import {
   PageHeader,
   Select,
 } from "@/components/ui";
-
-const LOGICAL_FIELDS = [
-  { key: "address", label: "Property Address", required: true },
-  { key: "status", label: "Property Status" },
-  { key: "askingPrice", label: "Asking Price" },
-  { key: "arv", label: "ARV" },
-  { key: "listingUrl", label: "Property Listing URL" },
-  { key: "photosUrl", label: "Property Photos URL" },
-  { key: "buyerName", label: "Buyer Name" },
-  { key: "buyerPhone", label: "Buyer Phone" },
-  { key: "buyerEmail", label: "Buyer Email" },
-  { key: "interestStatus", label: "Buyer-Property Interest Status" },
-  { key: "offerAmount", label: "Offer Amount" },
-  { key: "lastContactDate", label: "Last Contact Date" },
-  { key: "lastMessageSentDate", label: "Last Message Sent Date" },
-  { key: "nextFollowUpDate", label: "Next Follow-up Date" },
-  { key: "followUpStatus", label: "Follow-up Status" },
-  { key: "notes", label: "Notes" },
-  { key: "sourceRowId", label: "Source Row Identifier" },
-  { key: "lastModified", label: "Last Modified Timestamp" },
-];
-
-const HEADER_ALIASES: Record<string, string[]> = {
-  address: ["address", "property address", "property", "full address", "location"],
-  status: ["status", "property status", "stage", "pipeline"],
-  askingPrice: ["asking price", "price", "ask", "asking", "list price"],
-  arv: ["arv", "after repair value", "after repair", "arv estimate"],
-  listingUrl: ["listing url", "listing", "property url", "link", "website"],
-  photosUrl: ["photos url", "photos", "pictures", "images", "gallery", "photo"],
-  buyerName: ["buyer name", "buyer", "name", "contact name", "full name"],
-  buyerPhone: ["buyer phone", "phone", "phone number", "mobile", "cell"],
-  buyerEmail: ["buyer email", "email", "email address", "e-mail"],
-  interestStatus: ["interest status", "interest", "buyer status", "relationship status"],
-  offerAmount: ["offer amount", "offer", "offer price", "submitted offer"],
-  lastContactDate: ["last contact date", "last contact", "last touch", "last touch date"],
-  lastMessageSentDate: ["last message sent date", "last message", "last message sent", "message date"],
-  nextFollowUpDate: ["next follow-up date", "next follow up", "follow up date", "next followup", "due date"],
-  followUpStatus: ["follow-up status", "follow up status", "followup status", "task status"],
-  notes: ["notes", "notes / last update", "notes/last update", "last update", "comments", "remarks"],
-  sourceRowId: ["source row id", "row id", "source id", "id"],
-  lastModified: ["last modified", "last modified timestamp", "updated", "modified date"],
-};
-
-function autoMap(headers: string[]): ColumnMapping[] {
-  const mappings: ColumnMapping[] = [];
-  const usedColumns = new Set<number>();
-
-  for (const field of LOGICAL_FIELDS) {
-    const aliases = HEADER_ALIASES[field.key] ?? [field.key.toLowerCase()];
-    let bestMatch = -1;
-    let bestScore = 0;
-
-    headers.forEach((header, idx) => {
-      if (usedColumns.has(idx)) return;
-      const h = header.toLowerCase().trim();
-      for (const alias of aliases) {
-        if (h === alias) {
-          if (bestScore < 3) {
-            bestScore = 3;
-            bestMatch = idx;
-          }
-        } else if (h.includes(alias) || alias.includes(h)) {
-          if (bestScore < 2) {
-            bestScore = 2;
-            bestMatch = idx;
-          }
-        }
-      }
-    });
-
-    if (bestMatch >= 0 && bestScore >= 2) {
-      usedColumns.add(bestMatch);
-      mappings.push({
-        logicalField: field.key,
-        columnLetter: String.fromCharCode(65 + bestMatch),
-        headerName: headers[bestMatch],
-        source: "sheet",
-      });
-    }
-  }
-  return mappings;
-}
 
 export default function GoogleSheetsPage() {
   const db = useDb();
@@ -112,7 +36,8 @@ export default function GoogleSheetsPage() {
   const [mappings, setMappings] = useState<ColumnMapping[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<{ newCount: number; updatedCount: number; skippedCount: number } | null>(null);
+  const [syncProgress, setSyncProgress] = useState<SheetSyncProgress | null>(null);
+  const [importResult, setImportResult] = useState<string | null>(null);
 
   const connection = db.sheetConnections[0];
 
@@ -237,22 +162,26 @@ export default function GoogleSheetsPage() {
     return headers.indexOf(m.headerName);
   }
 
-  function saveConnection() {
+  function buildConnection(): SheetConnection {
     const ts = new Date().toISOString();
-    const conn: SheetConnection = {
+    return {
       id: connection?.id ?? uid("sc_"),
       orgId: db.organization.id,
       spreadsheetId: selectedSpreadsheet,
-      spreadsheetName: spreadsheets.find((s) => s.id === selectedSpreadsheet)?.name ?? "",
-      worksheetName: selectedWorksheet,
+      spreadsheetName: spreadsheets.find((s) => s.id === selectedSpreadsheet)?.name ?? connection?.spreadsheetName ?? "",
+      worksheetName: selectedWorksheet || connection?.worksheetName || "",
       isConnected: true,
       lastSyncAt: connection?.lastSyncAt ?? null,
       lastSyncStatus: connection?.lastSyncStatus ?? "never",
-      lastSyncError: null,
+      lastSyncError: connection?.lastSyncError ?? null,
       columnMappings: mappings,
       createdAt: connection?.createdAt ?? ts,
       updatedAt: ts,
     };
+  }
+
+  function saveConnection() {
+    const conn = buildConnection();
     updateDb((d) => ({
       ...d,
       sheetConnections: [conn],
@@ -275,78 +204,25 @@ export default function GoogleSheetsPage() {
   async function handleImport() {
     setImporting(true);
     setError(null);
+    setImportResult(null);
     try {
-      const preview = buildPreviewRows();
-      let newCount = 0;
-      let updatedCount = 0;
-      let skippedCount = 0;
-
-      updateDb((d) => {
-        const existingByAddress = new Map(
-          d.properties.map((p) => [p.address.toLowerCase().trim(), p]),
-        );
-        const newProps: Property[] = [];
-
-        for (const row of preview) {
-          const addr = row.address?.trim();
-          if (!addr) {
-            skippedCount++;
-            continue;
-          }
-          const key = addr.toLowerCase().trim();
-          const existing = existingByAddress.get(key);
-          if (existing) {
-            updatedCount++;
-          } else {
-            newCount++;
-            const ts = new Date().toISOString();
-            newProps.push({
-              id: uid("p_"),
-              orgId: d.organization.id,
-              address: addr,
-              city: "",
-              state: "",
-              zip: "",
-              status: row.status || "Available",
-              accessType: "",
-              askingPrice: row.askingPrice ? Number(String(row.askingPrice).replace(/[^0-9.]/g, "")) || null : null,
-              arv: row.arv ? Number(String(row.arv).replace(/[^0-9.]/g, "")) || null : null,
-              estimatedRepairs: null,
-              assignmentPrice: null,
-              marketingStartedAt: null,
-              expectedClosingDate: null,
-              notes: row.notes || "",
-              createdAt: ts,
-              updatedAt: ts,
-              createdBy: "u_owner",
-              propertyType: "",
-              bedrooms: "",
-              bathrooms: "",
-              sqft: "",
-              lotSize: "",
-              yearBuilt: "",
-              listingUrl: row.listingUrl || "",
-              photosUrl: row.photosUrl || "",
-              photos: row.photosUrl ? [row.photosUrl] : [],
-              sourceWebsite: "google-sheets",
-              sourcePropertyId: "",
-              sourceRowId: row._row,
-              firstImportedAt: ts,
-              lastSyncedAt: ts,
-              syncStatus: "synced",
-            });
-          }
-        }
-
-        return { ...d, properties: [...d.properties, ...newProps] };
-      });
-
-      setImportResult({ newCount, updatedCount, skippedCount });
+      const conn = buildConnection();
+      updateDb((d) => ({
+        ...d,
+        sheetConnections: [conn],
+      }));
+      const result = await runSheetSync(conn, setSyncProgress);
+      if (result.error) {
+        setError(result.error);
+      } else {
+        setImportResult(formatSheetSyncSummary(result));
+      }
       setPreviewOpen(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Import failed");
+      setError(e instanceof Error ? e.message : "Sync failed");
     } finally {
       setImporting(false);
+      setSyncProgress(null);
     }
   }
 
@@ -378,10 +254,7 @@ export default function GoogleSheetsPage() {
 
       {importResult && (
         <Card className="mb-5 border-emerald-200 bg-emerald-50">
-          <p className="px-4 py-3 text-sm text-emerald-800">
-            Import complete: {importResult.newCount} new, {importResult.updatedCount} updated,{" "}
-            {importResult.skippedCount} skipped.
-          </p>
+          <p className="px-4 py-3 text-sm text-emerald-800">{importResult}</p>
         </Card>
       )}
 
@@ -483,7 +356,13 @@ export default function GoogleSheetsPage() {
                   </Button>
                   <Button onClick={saveConnection}>Save Mapping</Button>
                   <Button onClick={() => void handleImport()} disabled={importing || getColumnIndex("address") < 0}>
-                    {importing ? "Importing…" : "Import Rows"}
+                    {importing
+                      ? syncProgress && syncProgress.phase !== "done"
+                        ? syncProgress.phase === "reading"
+                          ? "Reading sheet…"
+                          : `Applying ${syncProgress.done}/${syncProgress.total}…`
+                        : "Syncing…"
+                      : "Sync Now"}
                   </Button>
                 </div>
               </div>
@@ -520,29 +399,38 @@ export default function GoogleSheetsPage() {
             </Card>
           )}
 
-          {connection.lastSyncAt && (
-            <Card>
-              <div className="border-b border-slate-100 px-4 py-3">
-                <h2 className="text-sm font-semibold text-slate-800">Sync Status</h2>
+          <Card>
+            <div className="border-b border-slate-100 px-4 py-3">
+              <h2 className="text-sm font-semibold text-slate-800">Sync Status</h2>
+            </div>
+            <div className="grid gap-4 p-4 sm:grid-cols-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Last Sync</p>
+                <p className="mt-1 text-sm text-slate-700">{formatSheetLastSync(connection.lastSyncAt)}</p>
               </div>
-              <div className="grid gap-4 p-4 sm:grid-cols-3">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Last Sync</p>
-                  <p className="mt-1 text-sm text-slate-700">{formatDate(connection.lastSyncAt)}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Status</p>
-                  <div className="mt-1">
-                    <Badge label={connection.lastSyncStatus} />
-                  </div>
-                </div>
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Connected To</p>
-                  <p className="mt-1 text-sm text-slate-700">{connection.spreadsheetName}</p>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Status</p>
+                <div className="mt-1">
+                  <Badge label={connection.lastSyncStatus} />
                 </div>
               </div>
-            </Card>
-          )}
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Connected To</p>
+                <p className="mt-1 text-sm text-slate-700">
+                  {connection.spreadsheetName}
+                  {connection.worksheetName ? ` · ${connection.worksheetName}` : ""}
+                </p>
+              </div>
+            </div>
+            {connection.lastSyncError && (
+              <p className="border-t border-rose-100 px-4 py-3 text-sm text-rose-700">
+                {connection.lastSyncError}
+              </p>
+            )}
+            <p className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+              Auto-sync runs every 5 minutes while the app is open — changes in the Google Sheet are applied to the system automatically. The sheet itself is never modified (read-only access).
+            </p>
+          </Card>
         </div>
       )}
     </div>
