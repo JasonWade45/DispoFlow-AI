@@ -38,6 +38,7 @@ export interface Property {
   city: string;
   state: string;
   zip: string;
+  accessInfo: string;     // NEW: lockbox/gate codes, showing instructions
   status: string;
   accessType: string;
   askingPrice: number | null;
@@ -233,7 +234,7 @@ export interface Settings {
   priorityRulesEnabled: boolean;
 }
 
-export type FieldSource = "app" | "sheet" | "newest";
+export type FieldSource = "app" | "sheet" | "newest" | "ai";
 
 export interface ColumnMapping {
   logicalField: string;
@@ -253,6 +254,7 @@ export interface SheetConnection {
   lastSyncStatus: SyncStatus;
   lastSyncError: string | null;
   columnMappings: ColumnMapping[];
+  groupedRows?: boolean;
   createdAt: string;
   updatedAt: string;
 }

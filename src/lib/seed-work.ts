@@ -22,7 +22,7 @@ export function createSeed(): DB {
     version: 2,
     organization: { id: ORG_ID, name: "Summit Property Buyers", createdAt: ts(120) },
     users: seedUsers,
-    properties: [],
+    properties: [],  // accessInfo will be empty string by default
     buyers: [],
     relationships: [],
     interactions: [],

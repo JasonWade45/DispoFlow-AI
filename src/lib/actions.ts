@@ -299,8 +299,72 @@ export function updateRelationship(id: string, patch: Partial<BuyerProperty>): v
     relationships: db.relationships.map((r) =>
       r.id === id ? { ...r, ...patch, updatedAt: nowIso() } : r,
     ),
-  }))
+  ))
 }
+
+function normalizedPhone(phone: string): string {
+  return phone.replace(/\D/g, '').padStart(11, '0') // E.164 style
+}
+
+function computeBuyerConfidence(existing: Buyer, candidate: Buyer): number {
+  let score = 0
+  const maxScore = 4 // phone, email, companyName, fullName
+  if (existing.phone && candidate.phone && existing.phone === candidate.phone) score += 1
+  if (existing.email && candidate.email && existing.email.toLowerCase() === candidate.email.toLowerCase()) score += 1
+  if (existing.companyName && candidate.companyName && existing.companyName.toLowerCase() === candidate.companyName.toLowerCase()) score += 1
+  if (existing.fullName && candidate.fullName && existing.fullName.toLowerCase() === candidate.fullName.toLowerCase()) score += 1
+  return Math.round((score / maxScore) * 100)
+}
+
+export function detectPotentialDuplicates(db: DB): Array<{
+  buyerId: string
+  candidateBuyerId: string
+  confidence: number
+  evidence: { field: string; existing: string; candidate: string }
+}[]> {
+  const duplicates: Array<{
+    buyerId: string
+    candidateBuyerId: string
+    confidence: number
+    evidence: { field: string; existing: string; candidate: string }
+  }[]> = []
+  const checked = new Set<string>()
+  for (const buyer of db.buyers) {
+    if (checked.has(buyer.id)) continue
+    checked.add(buyer.id)
+    for (const other of db.buyers) {
+      if (buyer.id === other.id) continue
+      if (checked.has(other.id)) continue
+      const confidence = computeBuyerConfidence(buyer, other)
+      if (confidence >= 50) {
+        const evidence: Array<{ field: string; existing: string; candidate: string }> = []
+        if (buyer.phone && other.phone && buyer.phone === other.phone) {
+          evidence.push({ field: 'phone', existing: buyer.phone, candidate: other.phone })
+        }
+        if (buyer.email && other.email && buyer.email.toLowerCase() === other.email.toLowerCase()) {
+          evidence.push({ field: 'email', existing: buyer.email, candidate: other.email })
+        }
+        if (buyer.companyName && other.companyName && buyer.companyName.toLowerCase() === other.companyName.toLowerCase()) {
+          evidence.push({ field: 'companyName', existing: buyer.companyName, candidate: other.companyName })
+        }
+        if (buyer.fullName && other.fullName && buyer.fullName.toLowerCase() === other.fullName.toLowerCase()) {
+          evidence.push({ field: 'fullName', existing: buyer.fullName, candidate: other.fullName })
+        }
+        if (evidence.length > 0) {
+          duplicates.push({
+            buyerId: buyer.id,
+            candidateBuyerId: other.id,
+            confidence: confidence,
+            evidence: evidence,
+          })
+        }
+      }
+    }
+  }
+  return duplicates
+}
+
+export function linkBuyerToProperty(input: {
 
 export function logInteraction(input: {
   buyerId: string | null

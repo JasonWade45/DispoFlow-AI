@@ -51,10 +51,11 @@ export async function GET(
     }
     const data = await res.json()
     const worksheets = (data.sheets ?? []).map(
-      (s: { properties?: { sheetId?: number; title?: string; gridProperties?: { rowCount?: number } } }) => ({
+      (s: { properties?: { sheetId?: number; title?: string; gridProperties?: { rowCount?: number; columnCount?: number } } }) => ({
         sheetId: s.properties?.sheetId,
         title: s.properties?.title,
         rowCount: s.properties?.gridProperties?.rowCount,
+        columnCount: s.properties?.gridProperties?.columnCount,
       }),
     )
     return NextResponse.json({ worksheets })

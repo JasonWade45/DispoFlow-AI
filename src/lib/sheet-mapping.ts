@@ -60,6 +60,7 @@ export function autoMap(headers: string[]): ColumnMapping[] {
     headers.forEach((header, idx) => {
       if (usedColumns.has(idx)) return;
       const h = header.toLowerCase().trim();
+      if (!h) return;
       for (const alias of aliases) {
         if (h === alias) {
           if (bestScore < 3) {
@@ -109,14 +110,25 @@ export function columnLetterToIndex(letter: string): number {
 }
 
 export function mappingColumnIndex(headers: string[], mapping: ColumnMapping): number {
-  const byHeader = headers.findIndex((h) => h === mapping.headerName);
-  if (byHeader >= 0) return byHeader;
+  if (mapping.headerName) {
+    const byHeader = headers.findIndex((h) => h === mapping.headerName);
+    if (byHeader >= 0) return byHeader;
+  }
   const byLetter = columnLetterToIndex(mapping.columnLetter);
   return byLetter >= 0 && byLetter < headers.length ? byLetter : -1;
 }
 
+export function looksLikeStreetAddress(raw: string): boolean {
+  return /^\d+\s+\S/.test(raw.trim());
+}
+
+export interface BuildRecordsOptions {
+  carryAddress?: boolean;
+}
+
 export interface SheetRecord {
   _row: number;
+  carried?: boolean;
   address: string;
   status: string;
   askingPrice: string;
@@ -166,17 +178,50 @@ export function buildRecords(
   rows: string[][],
   mappings: ColumnMapping[],
   firstDataRow = 2,
+  opts: BuildRecordsOptions = {},
 ): SheetRecord[] {
   const usable = mappings
     .map((m) => ({ field: m.logicalField, index: mappingColumnIndex(headers, m) }))
     .filter((m) => m.index >= 0 && m.field in emptyRecord(0));
 
+  let lastAddress = "";
   return rows.map((row, i) => {
     const record = emptyRecord(firstDataRow + i);
     for (const { field, index } of usable) {
       const raw = row[index];
       (record as unknown as Record<string, string>)[field] = typeof raw === "string" ? raw.trim() : raw == null ? "" : String(raw).trim();
     }
+    if (opts.carryAddress) {
+      if (looksLikeStreetAddress(record.address)) {
+        lastAddress = record.address;
+      } else if (lastAddress) {
+        record.address = lastAddress;
+        record.carried = true;
+      }
+    }
     return record;
   });
+}
+
+export function detectGroupedRows(
+  headers: string[],
+  rows: string[][],
+  mappings: ColumnMapping[],
+): boolean {
+  const addrMapping = mappings.find((m) => m.logicalField === "address");
+  const nameMapping = mappings.find((m) => m.logicalField === "buyerName");
+  if (!addrMapping || !nameMapping) return false;
+  const addrIdx = mappingColumnIndex(headers, addrMapping);
+  const nameIdx = mappingColumnIndex(headers, nameMapping);
+  if (addrIdx < 0 || nameIdx < 0) return false;
+
+  let orphan = 0;
+  let standalone = 0;
+  for (const row of rows) {
+    if (!((row[nameIdx] ?? "").trim())) continue;
+    if (looksLikeStreetAddress((row[addrIdx] ?? "").trim())) standalone += 1;
+    else orphan += 1;
+  }
+  if (orphan + standalone < 2) return false;
+  return orphan > standalone;
 }

@@ -1,12 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDb } from "@/lib/store";
 import { updateDb } from "@/lib/store";
 import { purgeSheetImport } from "@/lib/actions";
+import { detectPotentialDuplicates, type DB } from "@/lib/actions";
+import { importDispoData, type DispoImportPayload } from "@/lib/import-dispo";
 import type { ColumnMapping, SheetConnection } from "@/types";
 import { uid } from "@/lib/format";
-import { LOGICAL_FIELDS, autoMap } from "@/lib/sheet-mapping";
+import { LOGICAL_FIELDS, autoMap, buildRecords, detectGroupedRows, indexToColumnLetter, looksLikeStreetAddress, mappingColumnIndex } from "@/lib/sheet-mapping";
+import { toColumnMappings, pickSampleRows, mergeMappings } from "@/lib/ai/column-map";
 import {
   formatSheetLastSync,
   formatSheetSyncSummary,
@@ -29,7 +32,7 @@ export default function GoogleSheetsPage() {
   const [, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [spreadsheets, setSpreadsheets] = useState<Array<{ id: string; name: string }>>([]);
-  const [worksheets, setWorksheets] = useState<Array<{ sheetId: number; title: string }>>([]);
+  const [worksheets, setWorksheets] = useState<Array<{ sheetId: number; title: string; rowCount?: number; columnCount?: number }>>([]);
   const [selectedSpreadsheet, setSelectedSpreadsheet] = useState("");
   const [selectedWorksheet, setSelectedWorksheet] = useState("");
   const [headers, setHeaders] = useState<string[]>([]);
@@ -41,9 +44,32 @@ export default function GoogleSheetsPage() {
   const [importResult, setImportResult] = useState<string | null>(null);
   const [authorized, setAuthorized] = useState(false);
   const [purgeResult, setPurgeResult] = useState<string | null>(null);
+  const [dispoResult, setDispoResult] = useState<string | null>(null);
+  const [importingDispo, setImportingDispo] = useState(false);
+  const [aiMapping, setAiMapping] = useState(false);
+  const [aiMapNote, setAiMapNote] = useState<string | null>(null);
+  const [dataQualityReview, setDataQualityReview] = useState(false);
+  const [potentialDuplicates, setPotentialDuplicates] = useState<
+    Array<{
+      buyerId: string
+      candidateBuyerId: string
+      confidence: number
+      evidence: Array<{ field: string; existing: string; candidate: string }>
+    }>
+  >([]);
 
   const connection = db.sheetConnections[0];
   const showPicker = authorized || Boolean(connection?.isConnected);
+
+  function buildInspectRange(
+    title: string,
+    wsList: Array<{ title: string; rowCount?: number; columnCount?: number }> = worksheets,
+  ): string {
+    const ws = wsList.find((w) => w.title === title);
+    const colCount = Math.min(Math.max(ws?.columnCount ?? 26, 26), 60);
+    const rowCount = Math.min(Math.max(ws?.rowCount ?? 100, 100), 500);
+    return `${title}!A1:${indexToColumnLetter(colCount - 1)}${rowCount}`;
+  }
 
   const fetchSpreadsheets = useCallback(async () => {
     setError(null);
@@ -90,17 +116,25 @@ export default function GoogleSheetsPage() {
         try {
           const res = await fetch(`/api/sheets/worksheets/${encodeURIComponent(c.spreadsheetId)}`);
           const data = await res.json();
-          if (res.ok) setWorksheets(data.worksheets ?? []);
+          const wsList = data.worksheets ?? [];
+          if (res.ok) setWorksheets(wsList);
           const insp = await fetch("/api/sheets/inspect", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ spreadsheetId: c.spreadsheetId, range: `${c.worksheetName}!A1:Z100` }),
+            body: JSON.stringify({
+              spreadsheetId: c.spreadsheetId,
+              range: buildInspectRange(c.worksheetName, wsList),
+            }),
           });
           const inspData = await insp.json();
           if (insp.ok) {
-            setHeaders(inspData.headers ?? []);
-            setRows(inspData.rows ?? []);
-            setMappings((prev) => (prev.length > 0 ? prev : autoMap(inspData.headers ?? [])));
+            const h = inspData.headers ?? [];
+            const r = inspData.rows ?? [];
+            setHeaders(h);
+            setRows(r);
+            if (c.columnMappings.length === 0) {
+              setMappings(await runAiMapping(h, r));
+            }
           }
         } catch {
           // ignore hydration errors — user can reselect manually
@@ -110,6 +144,20 @@ export default function GoogleSheetsPage() {
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection?.id]);
+
+  const groupedRows = useMemo(() => {
+    if (headers.length === 0 || rows.length === 0) return false;
+    return detectGroupedRows(headers, rows, mappings);
+  }, [headers, rows, mappings]);
+
+  useEffect(() => {
+    if (db.buyers.length > 1) {
+      const duplicates = detectPotentialDuplicates(db);
+      setPotentialDuplicates(
+        duplicates.filter((d) => d.confidence >= 50)
+      );
+    }
+  }, [db.buyers]);
 
   async function handleConnect() {
     setConnecting(true);
@@ -156,7 +204,7 @@ export default function GoogleSheetsPage() {
       const res = await fetch("/api/sheets/inspect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spreadsheetId: selectedSpreadsheet, range: `${title}!A1:Z100` }),
+        body: JSON.stringify({ spreadsheetId: selectedSpreadsheet, range: buildInspectRange(title) }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -165,11 +213,57 @@ export default function GoogleSheetsPage() {
       }
       setHeaders(data.headers ?? []);
       setRows(data.rows ?? []);
-      setMappings(autoMap(data.headers ?? []));
+      const h = data.headers ?? [];
+      const r = data.rows ?? [];
+      setMappings(await runAiMapping(h, r));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to read worksheet");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function runAiMapping(h: string[], r: string[][]): Promise<ColumnMapping[]> {
+    setAiMapping(true);
+    setAiMapNote(null);
+    try {
+      const res = await fetch("/api/ai/map-columns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ headers: h, sampleRows: pickSampleRows(r) }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAiMapNote(
+          res.status === 503
+            ? "AI mapping unavailable (no GROQ_API_KEY) — used header-name matching instead."
+            : `AI mapping failed: ${data.error || res.status} — used header-name matching instead.`,
+        );
+        return autoMap(h);
+      }
+      const aiMappings = toColumnMappings(data.mapping ?? {}, h);
+      if (aiMappings.length === 0) {
+        setAiMapNote(`AI returned no usable columns — used header-name matching instead.${data.notes ? ` ${data.notes}` : ""}`);
+        return autoMap(h);
+      }
+      if (data.addressValid) {
+        setAiMapNote(
+          `AI mapped ${aiMappings.length} fields from sample rows${data.notes ? ` — ${data.notes}` : ""}.`,
+        );
+        return aiMappings;
+      }
+      const merged = mergeMappings(autoMap(h), aiMappings);
+      setAiMapNote(
+        `AI mapped ${aiMappings.length} fields but could NOT find a street-address column — ${data.notes || "no column contained addresses like '123 Main St'."} Pick "Property Address" manually below (header-name matches were kept for the rest).`,
+      );
+      return merged;
+    } catch (e) {
+      setAiMapNote(
+        `AI mapping failed: ${e instanceof Error ? e.message : "network error"} — used header-name matching instead.`,
+      );
+      return autoMap(h);
+    } finally {
+      setAiMapping(false);
     }
   }
 
@@ -181,7 +275,7 @@ export default function GoogleSheetsPage() {
         ...filtered,
         {
           logicalField,
-          columnLetter: String.fromCharCode(65 + columnIndex),
+          columnLetter: indexToColumnLetter(columnIndex),
           headerName: headers[columnIndex],
           source: "sheet",
         },
@@ -196,7 +290,7 @@ export default function GoogleSheetsPage() {
   function getColumnIndex(logicalField: string): number {
     const m = getMapping(logicalField);
     if (!m) return -1;
-    return headers.indexOf(m.headerName);
+    return mappingColumnIndex(headers, m);
   }
 
   function buildConnection(): SheetConnection {
@@ -212,6 +306,7 @@ export default function GoogleSheetsPage() {
       lastSyncStatus: connection?.lastSyncStatus ?? "never",
       lastSyncError: connection?.lastSyncError ?? null,
       columnMappings: mappings,
+      groupedRows,
       createdAt: connection?.createdAt ?? ts,
       updatedAt: ts,
     };
@@ -226,16 +321,17 @@ export default function GoogleSheetsPage() {
   }
 
   function buildPreviewRows() {
-    const addrIdx = getColumnIndex("address");
-    if (addrIdx < 0) return [];
-    return rows.slice(0, 20).map((row, i) => {
-      const obj: Record<string, string> = { _row: String(i + 2) };
-      for (const field of LOGICAL_FIELDS) {
-        const idx = getColumnIndex(field.key);
-        obj[field.key] = idx >= 0 ? (row[idx] ?? "") : "";
-      }
-      return obj;
-    });
+    if (getColumnIndex("address") < 0) return [];
+    const recs = buildRecords(headers, rows, mappings, 2, { carryAddress: groupedRows });
+    return recs
+      .filter((r) => {
+        if (!looksLikeStreetAddress(r.address)) return false;
+        if (!r.carried) return true;
+        return Object.entries(r).some(
+          ([k, v]) => k !== "_row" && k !== "address" && k !== "carried" && v,
+        );
+      })
+      .slice(0, 20);
   }
 
   async function handleImport() {
@@ -272,6 +368,36 @@ export default function GoogleSheetsPage() {
       `Removed ${counts.properties} properties, ${counts.buyers} buyers, ${counts.relationships} links, ${counts.tasks} tasks, ${counts.offers} offers.`,
     );
     setImportResult(null);
+  }
+
+  async function handleDispoFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (
+      !window.confirm(
+        "Replace ALL existing properties, buyers, links, and offers with this Dispo Sheet export? This cannot be undone.",
+      )
+    ) {
+      return;
+    }
+    setImportingDispo(true);
+    setDispoResult(null);
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text) as DispoImportPayload;
+      if (!Array.isArray(payload.properties)) {
+        throw new Error("File does not look like a Dispo Sheet export (missing properties array).");
+      }
+      const r = importDispoData(payload, { replace: true });
+      setDispoResult(
+        `Imported ${r.properties} properties, ${r.buyers} buyers, ${r.relationships} links, ${r.offers} offers. Old data was replaced.`,
+      );
+    } catch (err) {
+      setDispoResult(`Import failed: ${err instanceof Error ? err.message : "unknown error"}`);
+    } finally {
+      setImportingDispo(false);
+    }
   }
 
   const previewRows = buildPreviewRows();
@@ -361,14 +487,103 @@ export default function GoogleSheetsPage() {
             <Card>
               <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
                 <h2 className="text-sm font-semibold text-slate-800">Column Mapping</h2>
-                <span className="text-xs text-slate-400">
-                  {mappings.length} of {LOGICAL_FIELDS.length} fields mapped
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-400">
+                    {mappings.length} of {LOGICAL_FIELDS.length} fields mapped
+                  </span>
+                  <Button
+                    variant="secondary"
+                    disabled={aiMapping}
+                    onClick={() => {
+                      void runAiMapping(headers, rows).then(setMappings);
+                    }}
+                  >
+                    {aiMapping ? "AI mapping…" : "Map with AI"}
+                  </Button>
+                </div>
               </div>
               <div className="p-4">
                 <p className="mb-4 text-sm text-slate-500">
-                  Map your spreadsheet columns to DispoFlow fields. Auto-mapping has been applied based on header names — adjust as needed.
+                  Map your spreadsheet columns to DispoFlow fields. The AI reads a sample of the actual
+                  rows to tell property addresses apart from status/text columns — adjust anything it
+                  gets wrong.
                 </p>
+                {aiMapNote && (
+                  <p className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                    {aiMapNote}
+                  </p>
+                )}
+                {groupedRows && (
+                  <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                    Grouped layout detected: rows that don&apos;t have their own street address will
+                    inherit the address from the property row above them (each property header row is
+                    followed by its buyer rows).
+                  </p>
+                )}
+                {dataQualityReview && (
+                  <Card>
+                    <div className="p-4">
+                      <h3 className="font-semibold mb-3">Data Quality Review</h3>
+                      <p className="text-sm text-slate-500 mb-3">
+                        Potential buyer duplicates detected. Review and merge or keep separate.
+                      </p>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-200">
+                              <th className="px-2 py-2">Existing Buyer</th>
+                              <th className="px-2 py-2">Candidate</th>
+                              <th className="px-2 py-2">Confidence</th>
+                              <th className="px-2 py-2">Evidence</th>
+                              <th className="px-2 py-2">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {potentialDuplicates.map((dup) => (
+                              <tr key={`${dup.buyerId}-${dup.candidateBuyerId}`} className="border-b border-slate-100">
+                                <td className="px-2 py-2">
+                                  {db.buyers.map((b) => b.id === dup.buyerId ? b.fullName : "").filter((x) => x)[0] || "—"}
+                                </td>
+                                <td className="px-2 py-2">
+                                  {db.buyers.map((b) => b.id === dup.candidateBuyerId ? b.fullName : "").filter((x) => x)[0] || "—"}
+                                </td>
+                                <td className="px-2 py-2">
+                                  {dup.confidence}%
+                                </td>
+                                <td className="px-2 py-2">
+                                  {dup.evidence.map((e) => `${e.field}: ${e.existing} → ${e.candidate}`).join(" | ")}
+                                </td>
+                                <td className="px-2 py-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => mergeBuyers(dup.buyerId, dup.candidateBuyerId)}
+                                  >
+                                    Merge
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setDataQualityReview(false)}
+                                  >
+                                    Close
+                                  </Button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <Button
+                        onClick={() => setDataQualityReview(false)}
+                        className="mt-3 w-full"
+                        disabled={potentialDuplicates.length === 0}
+                      >
+                        Close Review
+                      </Button>
+                    </div>
+                  </Card>
+                )}
                 <div className="grid gap-3 sm:grid-cols-2">
                   {LOGICAL_FIELDS.map((field) => {
                     const mappedIdx = getColumnIndex(field.key);
@@ -495,6 +710,29 @@ export default function GoogleSheetsPage() {
           )}
         </div>
       )}
+
+      <div className="mt-6">
+        <Card>
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-semibold text-slate-800">Import Dispo Sheet (JSON export)</h2>
+          </div>
+          <div className="px-4 py-3">
+            <p className="text-xs text-slate-500">
+              Upload the JSON export of the Dispo Sheet property sheet. This replaces all existing
+              properties, buyers, links, and offers.
+            </p>
+            <div className="mt-3 flex items-center gap-3">
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+                <input type="file" accept=".json" className="hidden" onChange={(e) => void handleDispoFile(e)} disabled={importingDispo} />
+                {importingDispo ? "Importing…" : "Choose JSON file"}
+              </label>
+              {dispoResult && (
+                <p className="text-xs text-slate-600">{dispoResult}</p>
+              )}
+            </div>
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }

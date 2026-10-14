@@ -134,7 +134,7 @@ export function buildGroqUserPrompt(input: GroqPromptInput): string {
   return lines.join("\n");
 }
 
-async function callGroq(system: string, user: string, temperature: number): Promise<string> {
+export async function callGroq(system: string, user: string, temperature: number): Promise<string> {
   const key = process.env.GROQ_API_KEY as string;
   let lastError: unknown;
   for (const model of [...new Set(MODELS)]) {

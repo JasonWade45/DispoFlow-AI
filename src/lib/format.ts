@@ -31,7 +31,9 @@ export function parseMoney(input: string): number | null {
   }
   const cleaned = trimmed.replace(/[^0-9.\-]/g, "");
   if (!cleaned) return null;
-  const n = Number(cleaned);
+  // European-style thousands separators: "479.000" / "1.234.567" → 479000 / 1234567
+  const normalized = /^-?\d{1,3}(\.\d{3})+$/.test(cleaned) ? cleaned.replace(/\./g, "") : cleaned;
+  const n = Number(normalized);
   return Number.isFinite(n) ? n : null;
 }
 

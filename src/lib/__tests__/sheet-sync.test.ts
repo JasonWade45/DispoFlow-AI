@@ -13,7 +13,13 @@ import {
   isSheetSyncDue,
   parseSheetDate,
 } from "@/lib/sheet-sync";
-import { autoMap, buildRecords, columnLetterToIndex, indexToColumnLetter } from "@/lib/sheet-mapping";
+import {
+  autoMap,
+  buildRecords,
+  columnLetterToIndex,
+  detectGroupedRows,
+  indexToColumnLetter,
+} from "@/lib/sheet-mapping";
 import type { ColumnMapping, SheetConnection } from "@/types";
 
 const HEADERS = [
@@ -97,6 +103,16 @@ describe("sheet-mapping", () => {
     expect(fields).toContain("arv");
     expect(fields).toContain("buyerName");
     expect(fields).not.toContain("notes");
+  });
+
+  it("autoMap skips empty headers instead of matching them to every field", () => {
+    const mappings = autoMap(["", "Name", "", "Phone Number"]);
+    const address = mappings.find((m) => m.logicalField === "address");
+    expect(address).toBeUndefined();
+    const buyer = mappings.find((m) => m.logicalField === "buyerName");
+    expect(buyer?.headerName).toBe("Name");
+    const phone = mappings.find((m) => m.logicalField === "buyerPhone");
+    expect(phone?.headerName).toBe("Phone Number");
   });
 
   it("column letters round-trip past Z", () => {
@@ -281,6 +297,116 @@ describe("applySheetRecords", () => {
     expect(stats.tasksTouched).toBe(1);
     const task = getDb().tasks.find((t) => t.id === taskId);
     expect(task?.status).toBe("Completed");
+  });
+});
+
+describe("grouped sheets (address carried to buyer rows)", () => {
+  const GROUP_HEADERS = ["Status", "Source / Address", "Name", "Phone"];
+  const GROUP_MAPPINGS: ColumnMapping[] = [
+    { logicalField: "address", columnLetter: "B", headerName: "Source / Address", source: "sheet" },
+    { logicalField: "interestStatus", columnLetter: "A", headerName: "Status", source: "sheet" },
+    { logicalField: "buyerName", columnLetter: "C", headerName: "Name", source: "sheet" },
+    { logicalField: "buyerPhone", columnLetter: "D", headerName: "Phone", source: "sheet" },
+  ];
+
+  const groupedRows: string[][] = [
+    ["", "", "", ""],
+    ["Property", "property address", "", ""],
+    ["", "1110 Buckhurst Dr, Atlanta, GA 30349", "", ""],
+    ["Interested", "Dipo Genuis", "Ben Winwood", "555-0100"],
+    ["Undecided", "Facebook", "Jane Roe", "555-0200"],
+    ["", "", "", ""],
+  ];
+
+  function groupedRecords(carryAddress = true) {
+    return buildRecords(GROUP_HEADERS, groupedRows, GROUP_MAPPINGS, 2, { carryAddress });
+  }
+
+  it("buildRecords carries the property address down to buyer rows", () => {
+    const recs = groupedRecords();
+    expect(recs[2].address).toBe("1110 Buckhurst Dr, Atlanta, GA 30349");
+    expect(recs[2].carried).toBeUndefined();
+    expect(recs[3].address).toBe("1110 Buckhurst Dr, Atlanta, GA 30349");
+    expect(recs[3].carried).toBe(true);
+    expect(recs[3].buyerName).toBe("Ben Winwood");
+    expect(recs[4].address).toBe("1110 Buckhurst Dr, Atlanta, GA 30349");
+    // rows before the first property header keep their raw values
+    expect(recs[0].address).toBe("");
+    expect(recs[1].address).toBe("property address");
+  });
+
+  it("keeps raw cells when carry is off", () => {
+    const recs = groupedRecords(false);
+    expect(recs[3].address).toBe("Dipo Genuis");
+    expect(recs[3].carried).toBeUndefined();
+  });
+
+  it("detects grouped layout from the data", () => {
+    expect(detectGroupedRows(GROUP_HEADERS, groupedRows, GROUP_MAPPINGS)).toBe(true);
+    const flat = [
+      ["Interested", "1110 Buckhurst Dr, Atlanta, GA 30349", "Ben Winwood", "555-0100"],
+      ["Undecided", "1401 Alleen Ave SW, Atlanta, GA 30310", "Jane Roe", "555-0200"],
+      ["Interested", "5847 McEver Rd, Flowery Branch, GA 30542", "Sam Smith", "555-0300"],
+    ];
+    expect(detectGroupedRows(GROUP_HEADERS, flat, GROUP_MAPPINGS)).toBe(false);
+    expect(detectGroupedRows(GROUP_HEADERS, groupedRows, [])).toBe(false);
+    expect(detectGroupedRows(GROUP_HEADERS, [], GROUP_MAPPINGS)).toBe(false);
+  });
+
+  it("imports a grouped sheet end-to-end: property, buyers, and links", () => {
+    reset();
+    const recs = groupedRecords();
+    const stats = applySheetRecords(recs, GROUP_MAPPINGS, "u_owner");
+
+    expect(stats.created).toBe(1);
+    expect(stats.skipped).toBe(2); // blank + legend rows before the first property
+    const db = getDb();
+    expect(db.properties).toHaveLength(1);
+    expect(db.properties[0].address).toContain("Buckhurst");
+    expect(db.properties[0].notes).toBe("");
+    expect(db.buyers).toHaveLength(2);
+    expect(db.buyers.map((b) => b.fullName).sort()).toEqual(["Ben Winwood", "Jane Roe"]);
+    expect(db.relationships).toHaveLength(2);
+    const ben = db.buyers.find((b) => b.fullName === "Ben Winwood");
+    const rel = db.relationships.find((r) => r.buyerId === ben?.id);
+    expect(rel?.propertyId).toBe(db.properties[0].id);
+    expect(rel?.interestStatus).toBe("Interested");
+  });
+
+  it("does not let carried buyer rows pollute property fields or create dupes on resync", () => {
+    reset();
+    applySheetRecords(groupedRecords(), GROUP_MAPPINGS, "u_owner");
+    const second = applySheetRecords(groupedRecords(), GROUP_MAPPINGS, "u_owner");
+
+    expect(second.created).toBe(0);
+    expect(second.buyersTouched).toBe(0);
+    const db = getDb();
+    expect(db.properties).toHaveLength(1);
+    expect(db.buyers).toHaveLength(2);
+    expect(db.relationships).toHaveLength(2);
+    expect(second.missing).toBe(0);
+  });
+
+  it("ignores junk property statuses from the sheet", () => {
+    reset();
+    const recs = buildRecords(
+      GROUP_HEADERS,
+      [
+        ["Interested", "1110 Buckhurst Dr, Atlanta, GA 30349", "", ""],
+        ["Interested", "1110 Buckhurst Dr, Atlanta, GA 30349", "Ben Winwood", "555-0100"],
+      ],
+      [
+        { logicalField: "address", columnLetter: "B", headerName: "Source / Address", source: "sheet" },
+        { logicalField: "status", columnLetter: "A", headerName: "Status", source: "sheet" },
+      ],
+      2,
+    );
+    applySheetRecords(recs, [
+      { logicalField: "address", columnLetter: "B", headerName: "Source / Address", source: "sheet" },
+      { logicalField: "status", columnLetter: "A", headerName: "Status", source: "sheet" },
+    ], "u_owner");
+
+    expect(getDb().properties[0].status).toBe("Available");
   });
 });
 
