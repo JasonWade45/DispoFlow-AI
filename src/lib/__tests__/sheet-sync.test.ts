@@ -225,6 +225,20 @@ describe("applySheetRecords", () => {
     expect(getDb().properties.find((p) => p.address === "1 Test St")).toBeDefined();
   });
 
+  it("skips rows whose address is not a street address", () => {
+    const recs = recordsFrom([
+      ["Interested", "Available"],
+      ["SOLD", "Available"],
+      ["c", "Available"],
+      ["10 Real Rd, Austin, TX 78701", "Available"],
+    ]);
+    const stats = applySheetRecords(recs, MAPPINGS, "u_owner");
+    expect(stats.created).toBe(1);
+    expect(stats.skipped).toBe(3);
+    expect(getDb().properties).toHaveLength(1);
+    expect(getDb().properties[0].address).toBe("10 Real Rd");
+  });
+
   it("completes an open follow-up task when the sheet marks it completed", () => {
     const propertyId = seedSheetProperty();
     const buyerId = addBuyer({

@@ -64,53 +64,63 @@ function PropertyCard({ db, p }: { db: DB; p: Property }) {
   const offerCount = offersForProperty(db, p.id).length;
   const due = nextFollowUpDue(db, p.id);
   const margin = p.askingPrice != null && p.arv != null ? p.arv - p.askingPrice : null;
+  const specs = [p.bedrooms && `${p.bedrooms}bd`, p.bathrooms && `${p.bathrooms}ba`, p.sqft && `${p.sqft}sf`]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <Link
       href={`/properties/${p.id}`}
       className="group overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition-all hover:border-slate-300 hover:shadow-md"
     >
-      <div className="relative aspect-[3/2] overflow-hidden bg-slate-100">
-        {thumb ? (
+      {thumb ? (
+        <div className="relative aspect-[3/2] overflow-hidden bg-slate-100">
           <img
             src={thumb}
             alt={p.address}
             className="h-full w-full object-cover transition-transform group-hover:scale-[1.03]"
             loading="lazy"
           />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-xs text-slate-400">
-            No photo
-          </div>
-        )}
-        <div className="absolute left-0 top-0 flex items-center gap-1.5 rounded-br-lg bg-black/60 px-2.5 py-1.5 text-xs font-semibold text-white">
-          {p.askingPrice != null ? formatMoney(p.askingPrice) : "No price"}
-        </div>
-        {margin != null && margin > 0 && (
-          <div className="absolute right-0 top-0 rounded-bl-lg bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
-            +{formatMoney(margin)} margin
-          </div>
-        )}
-        <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent px-2.5 pb-2 pt-6">
-          <span className="flex items-center gap-1.5 text-xs font-medium text-white">
-            <StatusDot status={p.status} />
-            {p.status}
-          </span>
-          {(p.bedrooms || p.bathrooms || p.sqft) && (
-            <span className="text-[11px] text-white/90">
-              {[p.bedrooms && `${p.bedrooms}bd`, p.bathrooms && `${p.bathrooms}ba`, p.sqft && `${p.sqft}sf`]
-                .filter(Boolean)
-                .join(" · ")}
-            </span>
+          {margin != null && margin > 0 && (
+            <div className="absolute right-0 top-0 rounded-bl-lg bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
+              +{formatMoney(margin)} margin
+            </div>
           )}
+          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent px-2.5 pb-2 pt-6">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-white">
+              <StatusDot status={p.status} />
+              {p.status}
+            </span>
+            {specs && <span className="text-[11px] text-white/90">{specs}</span>}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex items-center justify-center border-b border-slate-100 bg-slate-50 py-7">
+          <svg className="text-slate-300" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M3 10.5L12 3l9 7.5" />
+            <path d="M5 9.5V21h14V9.5" />
+            <path d="M9 21v-6h6v6" />
+          </svg>
+        </div>
+      )}
       <div className="px-3 py-2.5">
-        <p className="truncate text-sm font-medium text-slate-900">{p.address}</p>
+        <div className="flex items-start justify-between gap-2">
+          <p className="truncate text-sm font-medium text-slate-900">{p.address}</p>
+          <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-slate-900">
+            {p.askingPrice != null ? formatMoney(p.askingPrice) : <span className="font-normal text-slate-400">No price</span>}
+          </span>
+        </div>
         <p className="mt-0.5 truncate text-xs text-slate-500">
           {p.city}
           {p.state ? `, ${p.state}` : ""} {p.zip}
         </p>
+        <div className="mt-1.5 flex items-center gap-2 text-[11px]">
+          <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
+            <StatusDot status={p.status} />
+            {p.status}
+          </span>
+          {specs && <span className="text-slate-500">{specs}</span>}
+        </div>
         <div className="mt-2 flex items-center gap-3 text-[11px] text-slate-500">
           {buyerCount > 0 && (
             <span className="flex items-center gap-1">

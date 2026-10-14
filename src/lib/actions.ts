@@ -608,3 +608,58 @@ export function addImportHistory(entry: {
     ].slice(0, 100),
   }))
 }
+
+export function purgeSheetImport(): {
+  properties: number
+  buyers: number
+  relationships: number
+  tasks: number
+  offers: number
+} {
+  const counts = {
+    properties: 0,
+    buyers: 0,
+    relationships: 0,
+    tasks: 0,
+    offers: 0,
+  }
+  updateDb((db) => {
+    const sheetPropertyIds = new Set(
+      db.properties.filter((p) => p.sourceWebsite === "google-sheets").map((p) => p.id),
+    )
+    counts.properties = sheetPropertyIds.size
+
+    const relationships = db.relationships.filter((r) => !sheetPropertyIds.has(r.propertyId))
+    counts.relationships = db.relationships.length - relationships.length
+
+    const tasks = db.tasks.filter((t) => !sheetPropertyIds.has(t.propertyId))
+    counts.tasks = db.tasks.length - tasks.length
+
+    const offers = db.offers.filter((o) => !sheetPropertyIds.has(o.propertyId))
+    counts.offers = db.offers.length - offers.length
+
+    const interactions = db.interactions.filter(
+      (i) => !(i.propertyId && sheetPropertyIds.has(i.propertyId)),
+    )
+
+    const remainingBuyerIds = new Set<string>()
+    for (const r of relationships) remainingBuyerIds.add(r.buyerId)
+    for (const t of tasks) if (t.buyerId) remainingBuyerIds.add(t.buyerId)
+    for (const o of offers) remainingBuyerIds.add(o.buyerId)
+    for (const i of interactions) if (i.buyerId) remainingBuyerIds.add(i.buyerId)
+
+    const buyers = db.buyers.filter((b) => remainingBuyerIds.has(b.id))
+    counts.buyers = db.buyers.length - buyers.length
+
+    return {
+      ...db,
+      properties: db.properties.filter((p) => !sheetPropertyIds.has(p.id)),
+      relationships,
+      tasks,
+      offers,
+      interactions,
+      buyers,
+    }
+  })
+  return counts
+}

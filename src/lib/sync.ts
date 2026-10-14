@@ -1,7 +1,8 @@
 "use client"
 
 import { addImportHistory, importPropertiesBulk, updateProperty } from "@/lib/actions"
-import { getDb } from "@/lib/store"
+import { getDb, updateDb } from "@/lib/store"
+import { autoMergeDuplicates } from "@/lib/merge"
 import type { Property } from "@/types"
 
 const SYNC_KEY = "dispoflow_last_sync"
@@ -231,30 +232,36 @@ export async function runElevateRegSync(
   onProgress?.({ phase: "importing", done: newCards.length, total: newCards.length })
 
   onProgress?.({ phase: "enriching", done: 0, total: updateCards.length })
-  let udone = 0
-  for (const { card, property } of updateCards) {
-    const ts = new Date().toISOString()
-    const newStatus = statusFromBadge(card.statusBadge)
-    const patch: Partial<Property> = {
-      lastSyncedAt: ts,
-      syncStatus: "synced" as const,
-    }
-    if (card.price && card.price !== property.askingPrice) patch.askingPrice = card.price
-    if (card.bedrooms && card.bedrooms !== property.bedrooms) patch.bedrooms = card.bedrooms
-    if (card.bathrooms && card.bathrooms !== property.bathrooms) patch.bathrooms = card.bathrooms
-    if (card.sqft && card.sqft !== property.sqft) patch.sqft = card.sqft
-    if (card.propertyType && card.propertyType !== property.propertyType) patch.propertyType = card.propertyType
-    if (newStatus !== property.status && newStatus !== "Available") patch.status = newStatus
-    if (card.image && !property.photos.includes(card.image)) {
-      patch.photosUrl = card.image
-      patch.photos = [card.image, ...property.photos].slice(0, 20)
-    }
-    if (!property.listingUrl) patch.listingUrl = card.url
-    if (!property.sourceWebsite) patch.sourceWebsite = "elevatereg.com"
-    updateProperty(property.id, patch)
-    result.enriched += 1
-    udone += 1
-    onProgress?.({ phase: "enriching", done: udone, total: updateCards.length })
+  if (updateCards.length > 0) {
+    const enrichTs = new Date().toISOString()
+    updateDb((d) => ({
+      ...d,
+      properties: d.properties.map((p) => {
+        const match = updateCards.find((u) => u.property.id === p.id)
+        if (!match) return p
+        const { card, property } = match
+        const newStatus = statusFromBadge(card.statusBadge)
+        const patch: Partial<Property> = {
+          lastSyncedAt: enrichTs,
+          syncStatus: "synced" as const,
+        }
+        if (card.price && card.price !== property.askingPrice) patch.askingPrice = card.price
+        if (card.bedrooms && card.bedrooms !== property.bedrooms) patch.bedrooms = card.bedrooms
+        if (card.bathrooms && card.bathrooms !== property.bathrooms) patch.bathrooms = card.bathrooms
+        if (card.sqft && card.sqft !== property.sqft) patch.sqft = card.sqft
+        if (card.propertyType && card.propertyType !== property.propertyType) patch.propertyType = card.propertyType
+        if (newStatus !== property.status && newStatus !== "Available") patch.status = newStatus
+        if (card.image && !property.photos.includes(card.image)) {
+          patch.photosUrl = card.image
+          patch.photos = [card.image, ...property.photos].slice(0, 20)
+        }
+        if (!property.listingUrl) patch.listingUrl = card.url
+        if (!property.sourceWebsite) patch.sourceWebsite = "elevatereg.com"
+        return { ...p, ...patch, updatedAt: enrichTs }
+      }),
+    }))
+    result.enriched = updateCards.length
+    onProgress?.({ phase: "enriching", done: updateCards.length, total: updateCards.length })
   }
 
   const dbAfter = getDb()
@@ -324,6 +331,7 @@ export async function runElevateRegSync(
   }
 
   setLastSync()
+  autoMergeDuplicates()
   addImportHistory({
     source: "elevatereg.com",
     newCount: result.imported,

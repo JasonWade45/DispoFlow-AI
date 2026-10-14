@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDb } from "@/lib/store";
 import { updateDb } from "@/lib/store";
+import { purgeSheetImport } from "@/lib/actions";
 import type { ColumnMapping, SheetConnection } from "@/types";
 import { uid } from "@/lib/format";
 import { LOGICAL_FIELDS, autoMap } from "@/lib/sheet-mapping";
@@ -38,8 +39,11 @@ export default function GoogleSheetsPage() {
   const [importing, setImporting] = useState(false);
   const [syncProgress, setSyncProgress] = useState<SheetSyncProgress | null>(null);
   const [importResult, setImportResult] = useState<string | null>(null);
+  const [authorized, setAuthorized] = useState(false);
+  const [purgeResult, setPurgeResult] = useState<string | null>(null);
 
   const connection = db.sheetConnections[0];
+  const showPicker = authorized || Boolean(connection?.isConnected);
 
   const fetchSpreadsheets = useCallback(async () => {
     setError(null);
@@ -50,13 +54,14 @@ export default function GoogleSheetsPage() {
         if (data.error === "not_configured") {
           setError("Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your environment.");
         } else if (data.error === "not_authorized") {
-          setError("Not authorized. Click Connect to authorize Google Sheets access.");
+          setAuthorized(false);
         } else {
           setError(data.message || data.error || "Failed to load spreadsheets");
         }
         return;
       }
       setSpreadsheets(data.spreadsheets ?? []);
+      setAuthorized(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error");
     } finally {
@@ -64,15 +69,47 @@ export default function GoogleSheetsPage() {
     }
   }, []);
 
-  const isConnected = connection?.isConnected;
+  const hydratedConn = useRef(false);
   useEffect(() => {
-    if (isConnected) {
-      const t = window.setTimeout(() => {
-        void fetchSpreadsheets();
-      }, 0);
-      return () => window.clearTimeout(t);
-    }
-  }, [isConnected, fetchSpreadsheets]);
+    const t = window.setTimeout(() => {
+      void fetchSpreadsheets();
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [fetchSpreadsheets]);
+
+  useEffect(() => {
+    const c = db.sheetConnections[0];
+    if (!c?.spreadsheetId || hydratedConn.current) return;
+    hydratedConn.current = true;
+    const t = window.setTimeout(() => {
+      setSelectedSpreadsheet(c.spreadsheetId);
+      if (!c.worksheetName) return;
+      setSelectedWorksheet(c.worksheetName);
+      if (c.columnMappings.length > 0) setMappings(c.columnMappings);
+      void (async () => {
+        try {
+          const res = await fetch(`/api/sheets/worksheets/${encodeURIComponent(c.spreadsheetId)}`);
+          const data = await res.json();
+          if (res.ok) setWorksheets(data.worksheets ?? []);
+          const insp = await fetch("/api/sheets/inspect", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ spreadsheetId: c.spreadsheetId, range: `${c.worksheetName}!A1:Z100` }),
+          });
+          const inspData = await insp.json();
+          if (insp.ok) {
+            setHeaders(inspData.headers ?? []);
+            setRows(inspData.rows ?? []);
+            setMappings((prev) => (prev.length > 0 ? prev : autoMap(inspData.headers ?? [])));
+          }
+        } catch {
+          // ignore hydration errors — user can reselect manually
+        }
+      })();
+    }, 0);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connection?.id]);
 
   async function handleConnect() {
     setConnecting(true);
@@ -167,7 +204,7 @@ export default function GoogleSheetsPage() {
     return {
       id: connection?.id ?? uid("sc_"),
       orgId: db.organization.id,
-      spreadsheetId: selectedSpreadsheet,
+      spreadsheetId: selectedSpreadsheet || connection?.spreadsheetId || "",
       spreadsheetName: spreadsheets.find((s) => s.id === selectedSpreadsheet)?.name ?? connection?.spreadsheetName ?? "",
       worksheetName: selectedWorksheet || connection?.worksheetName || "",
       isConnected: true,
@@ -226,6 +263,17 @@ export default function GoogleSheetsPage() {
     }
   }
 
+  function handlePurge() {
+    if (!window.confirm("Remove all properties, buyers, and links that were imported from Google Sheets? This cannot be undone.")) {
+      return;
+    }
+    const counts = purgeSheetImport();
+    setPurgeResult(
+      `Removed ${counts.properties} properties, ${counts.buyers} buyers, ${counts.relationships} links, ${counts.tasks} tasks, ${counts.offers} offers.`,
+    );
+    setImportResult(null);
+  }
+
   const previewRows = buildPreviewRows();
 
   return (
@@ -234,7 +282,7 @@ export default function GoogleSheetsPage() {
         title="Google Sheets Integration"
         subtitle="Connect a Google Sheet to import and sync property data"
         actions={
-          connection?.isConnected ? (
+          showPicker ? (
             <Button variant="secondary" onClick={() => void fetchSpreadsheets()}>
               Refresh
             </Button>
@@ -258,7 +306,13 @@ export default function GoogleSheetsPage() {
         </Card>
       )}
 
-      {!connection?.isConnected ? (
+      {purgeResult && (
+        <Card className="mb-5 border-amber-200 bg-amber-50">
+          <p className="px-4 py-3 text-sm text-amber-800">{purgeResult}</p>
+        </Card>
+      )}
+
+      {!showPicker ? (
         <Card>
           <EmptyState
             title="Google Sheets not connected"
@@ -399,38 +453,46 @@ export default function GoogleSheetsPage() {
             </Card>
           )}
 
-          <Card>
-            <div className="border-b border-slate-100 px-4 py-3">
-              <h2 className="text-sm font-semibold text-slate-800">Sync Status</h2>
-            </div>
-            <div className="grid gap-4 p-4 sm:grid-cols-3">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Last Sync</p>
-                <p className="mt-1 text-sm text-slate-700">{formatSheetLastSync(connection.lastSyncAt)}</p>
+          {connection && (
+            <Card>
+              <div className="border-b border-slate-100 px-4 py-3">
+                <h2 className="text-sm font-semibold text-slate-800">Sync Status</h2>
               </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Status</p>
-                <div className="mt-1">
-                  <Badge label={connection.lastSyncStatus} />
+              <div className="grid gap-4 p-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Last Sync</p>
+                  <p className="mt-1 text-sm text-slate-700">{formatSheetLastSync(connection.lastSyncAt)}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Status</p>
+                  <div className="mt-1">
+                    <Badge label={connection.lastSyncStatus} />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Connected To</p>
+                  <p className="mt-1 text-sm text-slate-700">
+                    {connection.spreadsheetName}
+                    {connection.worksheetName ? ` · ${connection.worksheetName}` : ""}
+                  </p>
                 </div>
               </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Connected To</p>
-                <p className="mt-1 text-sm text-slate-700">
-                  {connection.spreadsheetName}
-                  {connection.worksheetName ? ` · ${connection.worksheetName}` : ""}
+              {connection.lastSyncError && (
+                <p className="border-t border-rose-100 px-4 py-3 text-sm text-rose-700">
+                  {connection.lastSyncError}
                 </p>
-              </div>
-            </div>
-            {connection.lastSyncError && (
-              <p className="border-t border-rose-100 px-4 py-3 text-sm text-rose-700">
-                {connection.lastSyncError}
+              )}
+              <p className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+                Auto-sync runs every 5 minutes while the app is open — changes in the Google Sheet are applied to the system automatically. The sheet itself is never modified (read-only access).
               </p>
-            )}
-            <p className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-              Auto-sync runs every 5 minutes while the app is open — changes in the Google Sheet are applied to the system automatically. The sheet itself is never modified (read-only access).
-            </p>
-          </Card>
+              <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
+                <p className="text-xs text-slate-500">Imported bad rows? Remove everything that came from this sheet.</p>
+                <Button variant="secondary" onClick={handlePurge}>
+                  Remove Imported Data
+                </Button>
+              </div>
+            </Card>
+          )}
         </div>
       )}
     </div>

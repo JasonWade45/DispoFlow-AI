@@ -1,32 +1,30 @@
 "use client"
 
 import {
-  addBuyer,
   addImportHistory,
-  addOffer,
-  addProperty,
-  cancelTask,
-  changePropertyStatus,
-  completeTask,
-  createTask,
-  linkBuyerToProperty,
-  updateBuyer,
-  updateOffer,
-  updateProperty,
-  updateRelationship,
-  updateTask,
 } from "@/lib/actions"
+import { autoMergeDuplicates } from "@/lib/merge"
 import { parseMoney, todayIso, uid } from "@/lib/format"
 import { OPEN_OFFER_STATUSES } from "@/lib/selectors"
 import { normalizeAddress, parseAddressParts } from "@/lib/sync"
-import { getDb, updateDb } from "@/lib/store"
+import { updateDb } from "@/lib/store"
 import {
   buildRecords,
   columnLetterToIndex,
   indexToColumnLetter,
   type SheetRecord,
 } from "@/lib/sheet-mapping"
-import type { Buyer, ColumnMapping, Property, SheetConnection } from "@/types"
+import type {
+  Buyer,
+  BuyerProperty,
+  ColumnMapping,
+  DB,
+  Interaction,
+  Offer,
+  Property,
+  SheetConnection,
+  Task,
+} from "@/types"
 
 export const SHEET_SYNC_INTERVAL_MS = 5 * 60 * 1000
 
@@ -156,17 +154,65 @@ function findBuyerFor(
 
 const FOLLOW_UP_STATUSES = new Set(["needs scheduling", "scheduled"])
 
-export function applySheetRecords(
+function cloneDraft(db: DB): DB {
+  return {
+    ...db,
+    properties: [...db.properties],
+    buyers: [...db.buyers],
+    relationships: [...db.relationships],
+    interactions: [...db.interactions],
+    tasks: [...db.tasks],
+    offers: [...db.offers],
+  }
+}
+
+function pushSystemInteraction(
+  draft: DB,
+  row: Partial<Interaction> & { eventType: Interaction["eventType"]; originalContent: string },
+  ts: string,
+  userId: string,
+): void {
+  draft.interactions.push({
+    id: uid("i"),
+    orgId: draft.organization.id,
+    buyerId: null,
+    propertyId: null,
+    direction: "system",
+    occurredAt: ts,
+    recordedAt: ts,
+    enhancedNotes: "",
+    outcome: "",
+    potentialOfferAmount: null,
+    potentialOfferConfirmed: false,
+    nextAction: "",
+    missingInfo: [],
+    isAiSuggestion: false,
+    createdBy: userId,
+    createdAt: ts,
+    updatedAt: ts,
+    ...row,
+  })
+}
+
+function looksLikeStreetAddress(raw: string): boolean {
+  return /^\d+\s+\S/.test(raw.trim())
+}
+
+export function applySheetRecordsImpl(
+  input: DB,
   records: SheetRecord[],
   mappings: ColumnMapping[],
   userId: string,
-): SheetApplyStats {
+): { db: DB; stats: SheetApplyStats } {
   const mapped = mappedSet(mappings)
   const stats: SheetApplyStats = { ...EMPTY_STATS }
+  const ts = new Date().toISOString()
+  const draft = cloneDraft(input)
+  const orgId = draft.organization.id
 
   for (const record of records) {
     const addressRaw = cell(record, "address", mapped)
-    if (!addressRaw) {
+    if (!addressRaw || !looksLikeStreetAddress(addressRaw)) {
       stats.skipped += 1
       continue
     }
@@ -174,396 +220,438 @@ export function applySheetRecords(
     const parts = parseAddressParts(addressRaw)
     const normAddr = normalizeAddress(parts?.address ?? addressRaw)
 
-    let db = getDb()
-    let property: Property | undefined = db.properties.find(
-      (p) => normalizeAddress(p.address) === normAddr,
-    )
+    let pIdx = draft.properties.findIndex((p) => normalizeAddress(p.address) === normAddr)
 
     const listingUrl = cell(record, "listingUrl", mapped)
-    if (!property && listingUrl) {
+    if (pIdx < 0 && listingUrl) {
       const target = listingUrl.replace(/\/$/, "")
-      property = db.properties.find(
+      pIdx = draft.properties.findIndex(
         (p) => p.listingUrl && p.listingUrl.replace(/\/$/, "") === target,
       )
     }
 
     const rowIdRaw = cell(record, "sourceRowId", mapped) || String(record._row)
-    if (!property && /^-?\d+$/.test(rowIdRaw)) {
-      property = db.properties.find(
+    if (pIdx < 0 && /^-?\d+$/.test(rowIdRaw)) {
+      pIdx = draft.properties.findIndex(
         (p) =>
           p.sourceRowId === rowIdRaw &&
           (p.sourceWebsite === "google-sheets" || p.sourceWebsite === ""),
       )
     }
 
-    if (!property) {
-      createPropertyFromRecord(record, parts, addressRaw, userId)
+    let property: Property
+
+    if (pIdx < 0) {
+      const status = record.status?.trim() || "Available"
+      const photosUrl = record.photosUrl?.trim() || ""
+      property = {
+        id: uid("p_"),
+        orgId,
+        address: parts?.address ?? addressRaw,
+        city: parts?.city ?? "",
+        state: parts?.state ?? "",
+        zip: parts?.zip ?? "",
+        status,
+        accessType: "",
+        askingPrice: parseMoney(record.askingPrice || ""),
+        arv: parseMoney(record.arv || ""),
+        estimatedRepairs: null,
+        assignmentPrice: null,
+        marketingStartedAt: status === "Marketing" ? ts : null,
+        expectedClosingDate: null,
+        notes: record.notes?.trim() || "",
+        createdAt: ts,
+        updatedAt: ts,
+        createdBy: userId,
+        propertyType: "",
+        bedrooms: "",
+        bathrooms: "",
+        sqft: "",
+        lotSize: "",
+        yearBuilt: "",
+        listingUrl: record.listingUrl?.trim() || "",
+        photosUrl,
+        photos: photosUrl ? [photosUrl] : [],
+        sourceWebsite: "google-sheets",
+        sourcePropertyId: "",
+        sourceRowId: String(record._row),
+        firstImportedAt: ts,
+        lastSyncedAt: ts,
+        syncStatus: "synced",
+      }
+      draft.properties.unshift(property)
       stats.created += 1
-      db = getDb()
-      property =
-        db.properties.find((p) => p.sourceRowId === String(record._row)) ??
-        db.properties.find((p) => normalizeAddress(p.address) === normAddr)
-      if (!property) continue
     } else {
-      const changed = updatePropertyFromRecord(property, record, addressRaw, parts, mapped, userId)
-      if (changed) stats.updated += 1
-      else stats.unchanged += 1
+      const existing = draft.properties[pIdx]
+      const patch: Partial<Property> = { lastSyncedAt: ts, syncStatus: "synced" }
+      let changed = false
+      let statusVal: string | null = null
+
+      if (parts) {
+        if (
+          parts.address !== existing.address ||
+          parts.city !== existing.city ||
+          parts.state !== existing.state ||
+          parts.zip !== existing.zip
+        ) {
+          patch.address = parts.address
+          patch.city = parts.city
+          patch.state = parts.state
+          patch.zip = parts.zip
+          changed = true
+        }
+      } else if (mapped.has("address") && addressRaw !== existing.address) {
+        patch.address = addressRaw
+        changed = true
+      }
+
+      const sheetStatus = cell(record, "status", mapped)
+      if (sheetStatus && sheetStatus !== existing.status) {
+        statusVal = sheetStatus
+        patch.status = sheetStatus
+        patch.marketingStartedAt =
+          sheetStatus === "Marketing" && !existing.marketingStartedAt
+            ? ts
+            : existing.marketingStartedAt
+        changed = true
+      }
+
+      const asking = cell(record, "askingPrice", mapped)
+      if (asking) {
+        const v = parseMoney(asking)
+        if (v !== null && v !== existing.askingPrice) {
+          patch.askingPrice = v
+          changed = true
+        }
+      }
+
+      const arv = cell(record, "arv", mapped)
+      if (arv) {
+        const v = parseMoney(arv)
+        if (v !== null && v !== existing.arv) {
+          patch.arv = v
+          changed = true
+        }
+      }
+
+      const listing = cell(record, "listingUrl", mapped)
+      if (listing && listing !== existing.listingUrl) {
+        patch.listingUrl = listing
+        changed = true
+      }
+
+      const photos = cell(record, "photosUrl", mapped)
+      if (photos && photos !== existing.photosUrl) {
+        patch.photosUrl = photos
+        if (!existing.photos.includes(photos)) {
+          patch.photos = [photos, ...existing.photos].slice(0, 20)
+        }
+        changed = true
+      }
+
+      const notes = cell(record, "notes", mapped)
+      if (notes && notes !== existing.notes) {
+        patch.notes = notes
+        changed = true
+      }
+
+      if (existing.sourceRowId !== String(record._row)) {
+        patch.sourceRowId = String(record._row)
+        changed = true
+      }
+      if (!existing.sourceWebsite) {
+        patch.sourceWebsite = "google-sheets"
+        changed = true
+      }
+
+      if (changed) {
+        property = { ...existing, ...patch, updatedAt: ts }
+        draft.properties[pIdx] = property
+        stats.updated += 1
+
+        if (statusVal) {
+          pushSystemInteraction(
+            draft,
+            {
+              propertyId: property.id,
+              eventType: "Status Changed",
+              originalContent: `Property status changed: ${existing.status} → ${statusVal}.`,
+            },
+            ts,
+            userId,
+          )
+          if (statusVal === "Sold" || statusVal === "Cancelled") {
+            draft.tasks = draft.tasks.map((t) =>
+              t.propertyId === property.id &&
+              t.status !== "Completed" &&
+              t.status !== "Cancelled"
+                ? {
+                    ...t,
+                    status: "Cancelled" as const,
+                    completionNotes: `Auto-cancelled when property moved to ${statusVal}.`,
+                  }
+                : t,
+            )
+          }
+        }
+      } else {
+        property = existing
+        stats.unchanged += 1
+      }
     }
 
-    db = getDb()
-    const buyerId = syncBuyerFromRecord(db, record, mapped, userId, stats)
+    const name = cell(record, "buyerName", mapped)
+    const phone = cell(record, "buyerPhone", mapped)
+    const email = cell(record, "buyerEmail", mapped)
+    let buyerId: string | null = null
+
+    if (name || phone || email) {
+      const found = findBuyerFor(draft.buyers, name, phone, email)
+      if (found) {
+        const patch: Partial<Buyer> = {}
+        if (name && name !== found.fullName) patch.fullName = name
+        if (phone && phone !== found.phone) patch.phone = phone
+        if (email && email !== found.email) patch.email = email
+        if (Object.keys(patch).length > 0) {
+          const idx = draft.buyers.findIndex((b) => b.id === found.id)
+          draft.buyers[idx] = { ...found, ...patch, updatedAt: ts }
+          stats.buyersTouched += 1
+        }
+        buyerId = found.id
+      } else if (name) {
+        const created: Buyer = {
+          id: uid("b_"),
+          orgId,
+          fullName: name,
+          companyName: "",
+          phone,
+          email,
+          preferredContactMethod: "",
+          preferredMarkets: [],
+          propertyTypes: [],
+          budgetMin: null,
+          budgetMax: null,
+          status: "Active",
+          notes: "",
+          createdAt: ts,
+          updatedAt: ts,
+          createdBy: userId,
+        }
+        draft.buyers.unshift(created)
+        buyerId = created.id
+        stats.buyersTouched += 1
+      }
+    }
+
     if (buyerId) {
-      syncOffer(db, property.id, buyerId, record, mapped, userId, stats)
-      syncRelationship(db, property.id, buyerId, record, mapped, userId, stats)
-    }
-    syncFollowUpTask(db, property.id, buyerId, record, addressRaw, mapped, userId, stats)
-  }
+      const offerRaw = cell(record, "offerAmount", mapped)
+      if (offerRaw) {
+        const amount = parseMoney(offerRaw)
+        if (amount !== null && amount > 0) {
+          const openIdx = draft.offers.findIndex(
+            (o) =>
+              o.buyerId === buyerId &&
+              o.propertyId === property.id &&
+              OPEN_OFFER_STATUSES.includes(o.status),
+          )
+          if (openIdx >= 0) {
+            const open = draft.offers[openIdx]
+            if (open.amount !== amount) {
+              draft.offers[openIdx] = { ...open, amount, updatedAt: ts }
+              stats.offersTouched += 1
+            }
+          } else {
+            const offer: Offer = {
+              id: uid("o_"),
+              orgId,
+              buyerId,
+              propertyId: property.id,
+              amount,
+              offerDate: todayIso(),
+              terms: "",
+              expiresAt: null,
+              status: "Submitted",
+              negotiationNotes: "",
+              nextAction: "",
+              createdBy: userId,
+              createdAt: ts,
+              updatedAt: ts,
+            }
+            draft.offers.unshift(offer)
+            const buyer = draft.buyers.find((b) => b.id === buyerId)
+            pushSystemInteraction(
+              draft,
+              {
+                buyerId,
+                propertyId: property.id,
+                eventType: "Offer Created",
+                originalContent: `Offer created${buyer ? ` by ${buyer.fullName}` : ""}: $${amount.toLocaleString("en-US")} — no terms.`,
+              },
+              ts,
+              userId,
+            )
+            stats.offersTouched += 1
+          }
+        }
+      }
 
-  stats.missing = countMissingFromSheet(getDb(), records)
-  return stats
-}
-
-function createPropertyFromRecord(
-  record: SheetRecord,
-  parts: { address: string; city: string; state: string; zip: string } | null,
-  addressRaw: string,
-  userId: string,
-): void {
-  const ts = new Date().toISOString()
-  addProperty({
-    address: parts?.address ?? addressRaw,
-    city: parts?.city ?? "",
-    state: parts?.state ?? "",
-    zip: parts?.zip ?? "",
-    status: record.status?.trim() || "Available",
-    askingPrice: parseMoney(record.askingPrice || ""),
-    arv: parseMoney(record.arv || ""),
-    estimatedRepairs: null,
-    assignmentPrice: null,
-    expectedClosingDate: null,
-    notes: record.notes?.trim() || "",
-    userId,
-    listingUrl: record.listingUrl?.trim() || "",
-    photosUrl: record.photosUrl?.trim() || "",
-    photos: record.photosUrl?.trim() ? [record.photosUrl.trim()] : [],
-    sourceWebsite: "google-sheets",
-    sourceRowId: String(record._row),
-    firstImportedAt: ts,
-    lastSyncedAt: ts,
-    syncStatus: "synced",
-  })
-}
-
-function updatePropertyFromRecord(
-  property: Property,
-  record: SheetRecord,
-  addressRaw: string,
-  parts: { address: string; city: string; state: string; zip: string } | null,
-  mapped: Set<string>,
-  userId: string,
-): boolean {
-  const ts = new Date().toISOString()
-  const patch: Partial<Property> = {
-    lastSyncedAt: ts,
-    syncStatus: "synced",
-  }
-  let changed = false
-  let statusChange: string | null = null
-
-  if (parts) {
-    if (
-      parts.address !== property.address ||
-      parts.city !== property.city ||
-      parts.state !== property.state ||
-      parts.zip !== property.zip
-    ) {
-      patch.address = parts.address
-      patch.city = parts.city
-      patch.state = parts.state
-      patch.zip = parts.zip
-      changed = true
-    }
-  } else if (mapped.has("address") && addressRaw !== property.address) {
-    patch.address = addressRaw
-    changed = true
-  }
-
-  const statusVal = cell(record, "status", mapped)
-  if (statusVal && statusVal !== property.status) {
-    statusChange = statusVal
-    changed = true
-  }
-
-  const asking = cell(record, "askingPrice", mapped)
-  if (asking) {
-    const v = parseMoney(asking)
-    if (v !== null && v !== property.askingPrice) {
-      patch.askingPrice = v
-      changed = true
-    }
-  }
-
-  const arv = cell(record, "arv", mapped)
-  if (arv) {
-    const v = parseMoney(arv)
-    if (v !== null && v !== property.arv) {
-      patch.arv = v
-      changed = true
-    }
-  }
-
-  const listingUrl = cell(record, "listingUrl", mapped)
-  if (listingUrl && listingUrl !== property.listingUrl) {
-    patch.listingUrl = listingUrl
-    changed = true
-  }
-
-  const photosUrl = cell(record, "photosUrl", mapped)
-  if (photosUrl && photosUrl !== property.photosUrl) {
-    patch.photosUrl = photosUrl
-    if (!property.photos.includes(photosUrl)) {
-      patch.photos = [photosUrl, ...property.photos].slice(0, 20)
-    }
-    changed = true
-  }
-
-  const notes = cell(record, "notes", mapped)
-  if (notes && notes !== property.notes) {
-    patch.notes = notes
-    changed = true
-  }
-
-  if (property.sourceRowId !== String(record._row)) {
-    patch.sourceRowId = String(record._row)
-    changed = true
-  }
-  if (!property.sourceWebsite) {
-    patch.sourceWebsite = "google-sheets"
-    changed = true
-  }
-
-  if (changed) {
-    updateProperty(property.id, patch)
-    if (statusChange) changePropertyStatus(property.id, statusChange, userId)
-  }
-  return changed
-}
-
-function syncBuyerFromRecord(
-  db: ReturnType<typeof getDb>,
-  record: SheetRecord,
-  mapped: Set<string>,
-  userId: string,
-  stats: SheetApplyStats,
-): string | null {
-  const name = cell(record, "buyerName", mapped)
-  const phone = cell(record, "buyerPhone", mapped)
-  const email = cell(record, "buyerEmail", mapped)
-  if (!name && !phone && !email) return null
-
-  const existing = findBuyerFor(db.buyers, name, phone, email)
-  if (existing) {
-    const patch: Partial<Buyer> = {}
-    if (name && name !== existing.fullName) patch.fullName = name
-    if (phone && phone !== existing.phone) patch.phone = phone
-    if (email && email !== existing.email) patch.email = email
-    if (Object.keys(patch).length > 0) {
-      updateBuyer(existing.id, patch)
-      stats.buyersTouched += 1
-    }
-    return existing.id
-  }
-
-  if (!name) return null
-  const id = addBuyer({
-    fullName: name,
-    companyName: "",
-    phone,
-    email,
-    preferredContactMethod: "",
-    preferredMarkets: [],
-    budgetMin: null,
-    budgetMax: null,
-    status: "Active",
-    notes: "",
-    userId,
-  })
-  stats.buyersTouched += 1
-  return id
-}
-
-function syncRelationship(
-  db: ReturnType<typeof getDb>,
-  propertyId: string,
-  buyerId: string,
-  record: SheetRecord,
-  mapped: Set<string>,
-  userId: string,
-  stats: SheetApplyStats,
-): void {
-  const interestStatus = cell(record, "interestStatus", mapped)
-  const lastContact = cell(record, "lastContactDate", mapped)
-  const lastMessage = cell(record, "lastMessageSentDate", mapped)
-  const nextFollowUp = cell(record, "nextFollowUpDate", mapped)
-
-  const existing = db.relationships.find(
-    (r) => r.buyerId === buyerId && r.propertyId === propertyId,
-  )
-
-  if (!existing) {
-    linkBuyerToProperty({
-      buyerId,
-      propertyId,
-      interestStatus: interestStatus || "New",
-      interestNotes: "",
-      assignedUserId: null,
-      userId,
-    })
-    stats.buyersTouched += 1
-    const created = getDb().relationships.find(
-      (r) => r.buyerId === buyerId && r.propertyId === propertyId,
-    )
-    if (created) {
-      const patch: Record<string, string | null> = {}
+      const interestStatus = cell(record, "interestStatus", mapped)
+      const lastContact = cell(record, "lastContactDate", mapped)
+      const lastMessage = cell(record, "lastMessageSentDate", mapped)
+      const nextFollowUp = cell(record, "nextFollowUpDate", mapped)
       const lc = lastContact ? parseSheetTimestamp(lastContact) : null
       const lm = lastMessage ? parseSheetTimestamp(lastMessage) : null
       const nf = nextFollowUp ? parseSheetDate(nextFollowUp) : null
-      if (lc && lc !== created.lastContactedAt) patch.lastContactedAt = lc
-      if (lm && lm !== created.lastMessageSentAt) patch.lastMessageSentAt = lm
-      if (nf && nf !== created.nextFollowUpDate) patch.nextFollowUpDate = nf
-      if (Object.keys(patch).length > 0) updateRelationship(created.id, patch)
+
+      const relIdx = draft.relationships.findIndex(
+        (r) => r.buyerId === buyerId && r.propertyId === property.id,
+      )
+
+      if (relIdx < 0) {
+        const rel: BuyerProperty = {
+          id: uid("r_"),
+          orgId,
+          buyerId,
+          propertyId: property.id,
+          interestStatus: interestStatus || "New",
+          interestNotes: "",
+          firstContactDate: todayIso(),
+          lastInteractionDate: null,
+          nextFollowUpDate: nf,
+          nextAction: "",
+          assignedUserId: null,
+          relationshipStatus: "Active",
+          createdAt: ts,
+          updatedAt: ts,
+          lastContactedAt: lc,
+          lastMessageSentAt: lm,
+          lastCallAt: null,
+          syncStatus: "never",
+          sourceRowId: "",
+        }
+        draft.relationships.unshift(rel)
+        const buyer = draft.buyers.find((b) => b.id === buyerId)
+        pushSystemInteraction(
+          draft,
+          {
+            buyerId,
+            propertyId: property.id,
+            eventType: "Status Changed",
+            originalContent: `${buyer?.fullName ?? "Buyer"} linked to ${property.address} (${rel.interestStatus}).`,
+          },
+          ts,
+          userId,
+        )
+        stats.buyersTouched += 1
+      } else {
+        const rel = draft.relationships[relIdx]
+        const patch: Partial<BuyerProperty> = {}
+        if (interestStatus && interestStatus !== rel.interestStatus) {
+          patch.interestStatus = interestStatus
+        }
+        if (lc && lc !== rel.lastContactedAt) patch.lastContactedAt = lc
+        if (lm && lm !== rel.lastMessageSentAt) patch.lastMessageSentAt = lm
+        if (nf && nf !== rel.nextFollowUpDate) patch.nextFollowUpDate = nf
+        if (Object.keys(patch).length > 0) {
+          draft.relationships[relIdx] = { ...rel, ...patch, updatedAt: ts }
+          stats.buyersTouched += 1
+        }
+      }
     }
-    return
+
+    const rawDate = cell(record, "nextFollowUpDate", mapped)
+    const rawStatus = cell(record, "followUpStatus", mapped)
+    if (rawDate || rawStatus) {
+      const dueDate = rawDate ? parseSheetDate(rawDate) : null
+      const openTasks = draft.tasks.filter(
+        (t) =>
+          t.propertyId === property.id &&
+          t.status !== "Completed" &&
+          t.status !== "Cancelled" &&
+          (!buyerId || !t.buyerId || t.buyerId === buyerId),
+      )
+      const task =
+        openTasks.find((t) => t.taskType.toLowerCase().includes("follow")) ?? openTasks[0]
+
+      if (task) {
+        const tIdx = draft.tasks.findIndex((t) => t.id === task.id)
+        const statusLower = rawStatus.toLowerCase()
+        if (["completed", "complete", "done"].includes(statusLower)) {
+          draft.tasks[tIdx] = {
+            ...task,
+            status: "Completed" as const,
+            completionNotes: "Marked complete via Google Sheet sync.",
+            completedAt: ts,
+            completedVia: "complete" as const,
+          }
+          pushSystemInteraction(
+            draft,
+            {
+              buyerId: task.buyerId,
+              propertyId: task.propertyId,
+              eventType: "Follow-Up Completed",
+              originalContent: `Follow-up completed: ${task.description} — Marked complete via Google Sheet sync.`,
+            },
+            ts,
+            userId,
+          )
+          stats.tasksTouched += 1
+        } else if (["cancelled", "canceled"].includes(statusLower)) {
+          draft.tasks[tIdx] = {
+            ...task,
+            status: "Cancelled" as const,
+            completionNotes: "Cancelled via Google Sheet sync.",
+            completedAt: ts,
+          }
+          stats.tasksTouched += 1
+        } else {
+          const patch: Partial<Task> = {}
+          if (dueDate && dueDate !== task.dueDate) patch.dueDate = dueDate
+          if (FOLLOW_UP_STATUSES.has(statusLower) && rawStatus !== task.status) {
+            patch.status = rawStatus as Task["status"]
+          }
+          if (Object.keys(patch).length > 0) {
+            draft.tasks[tIdx] = { ...task, ...patch }
+            stats.tasksTouched += 1
+          }
+        }
+      } else if (dueDate) {
+        draft.tasks.unshift({
+          id: uid("t_"),
+          orgId,
+          buyerId,
+          propertyId: property.id,
+          relatedInteractionId: null,
+          taskType: "Follow-Up",
+          description: `Follow up — ${addressRaw}`,
+          dueDate,
+          dueTime: null,
+          assignedUserId: userId,
+          priority: "Medium",
+          status: "Scheduled",
+          completionNotes: "",
+          createdAt: ts,
+          completedAt: null,
+          completedVia: null,
+          sentAt: null,
+        })
+        if (buyerId) {
+          draft.relationships = draft.relationships.map((r) =>
+            r.buyerId === buyerId && r.propertyId === property.id
+              ? { ...r, nextFollowUpDate: dueDate, updatedAt: ts }
+              : r,
+          )
+        }
+        stats.tasksTouched += 1
+      }
+    }
   }
 
-  const patch: Record<string, string | null> = {}
-  if (interestStatus && interestStatus !== existing.interestStatus) {
-    patch.interestStatus = interestStatus
-  }
-  if (lastContact) {
-    const iso = parseSheetTimestamp(lastContact)
-    if (iso && iso !== existing.lastContactedAt) patch.lastContactedAt = iso
-  }
-  if (lastMessage) {
-    const iso = parseSheetTimestamp(lastMessage)
-    if (iso && iso !== existing.lastMessageSentAt) patch.lastMessageSentAt = iso
-  }
-  if (nextFollowUp) {
-    const iso = parseSheetDate(nextFollowUp)
-    if (iso && iso !== existing.nextFollowUpDate) patch.nextFollowUpDate = iso
-  }
-  if (Object.keys(patch).length > 0) {
-    updateRelationship(existing.id, patch)
-    stats.buyersTouched += 1
-  }
+  stats.missing = countMissingFromSheet(draft, records)
+  return { db: draft, stats }
 }
 
-function syncOffer(
-  db: ReturnType<typeof getDb>,
-  propertyId: string,
-  buyerId: string | null,
-  record: SheetRecord,
-  mapped: Set<string>,
-  userId: string,
-  stats: SheetApplyStats,
-): void {
-  const raw = cell(record, "offerAmount", mapped)
-  if (!raw || !buyerId) return
-  const amount = parseMoney(raw)
-  if (amount === null || amount <= 0) return
-
-  const open = db.offers.find(
-    (o) =>
-      o.buyerId === buyerId &&
-      o.propertyId === propertyId &&
-      OPEN_OFFER_STATUSES.includes(o.status),
-  )
-  if (open) {
-    if (open.amount !== amount) {
-      updateOffer(open.id, { amount }, userId)
-      stats.offersTouched += 1
-    }
-    return
-  }
-  addOffer({
-    buyerId,
-    propertyId,
-    amount,
-    offerDate: todayIso(),
-    terms: "",
-    expiresAt: null,
-    status: "Submitted",
-    negotiationNotes: "",
-    nextAction: "",
-    userId,
-  })
-  stats.offersTouched += 1
-}
-
-function syncFollowUpTask(
-  db: ReturnType<typeof getDb>,
-  propertyId: string,
-  buyerId: string | null,
-  record: SheetRecord,
-  addressRaw: string,
-  mapped: Set<string>,
-  userId: string,
-  stats: SheetApplyStats,
-): void {
-  const rawDate = cell(record, "nextFollowUpDate", mapped)
-  const rawStatus = cell(record, "followUpStatus", mapped)
-  if (!rawDate && !rawStatus) return
-
-  const dueDate = rawDate ? parseSheetDate(rawDate) : null
-  const openTasks = db.tasks.filter(
-    (t) =>
-      t.propertyId === propertyId &&
-      t.status !== "Completed" &&
-      t.status !== "Cancelled" &&
-      (!buyerId || !t.buyerId || t.buyerId === buyerId),
-  )
-  const task =
-    openTasks.find((t) => t.taskType.toLowerCase().includes("follow")) ?? openTasks[0]
-
-  if (task) {
-    const statusLower = rawStatus.toLowerCase()
-    if (["completed", "complete", "done"].includes(statusLower)) {
-      completeTask(task.id, "Marked complete via Google Sheet sync.", userId)
-      stats.tasksTouched += 1
-      return
-    }
-    if (["cancelled", "canceled"].includes(statusLower)) {
-      cancelTask(task.id, "Cancelled via Google Sheet sync.")
-      stats.tasksTouched += 1
-      return
-    }
-    const patch: Record<string, string> = {}
-    if (dueDate && dueDate !== task.dueDate) patch.dueDate = dueDate
-    if (FOLLOW_UP_STATUSES.has(statusLower) && rawStatus !== task.status) {
-      patch.status = rawStatus
-    }
-    if (Object.keys(patch).length > 0) {
-      updateTask(task.id, patch)
-      stats.tasksTouched += 1
-    }
-    return
-  }
-
-  if (!dueDate) return
-  createTask({
-    buyerId,
-    propertyId,
-    taskType: "Follow-Up",
-    description: `Follow up — ${addressRaw}`,
-    dueDate,
-    dueTime: null,
-    assignedUserId: userId,
-    priority: "Medium",
-  })
-  stats.tasksTouched += 1
-}
-
-function countMissingFromSheet(db: ReturnType<typeof getDb>, records: SheetRecord[]): number {
+function countMissingFromSheet(db: DB, records: SheetRecord[]): number {
   const addrSet = new Set(
     records.map((r) => {
       const parts = parseAddressParts(r.address)
@@ -582,7 +670,34 @@ function countMissingFromSheet(db: ReturnType<typeof getDb>, records: SheetRecor
   return missing
 }
 
-export async function runSheetSync(
+export function applySheetRecords(
+  records: SheetRecord[],
+  mappings: ColumnMapping[],
+  userId: string,
+): SheetApplyStats {
+  let stats: SheetApplyStats = { ...EMPTY_STATS }
+  updateDb((d) => {
+    const result = applySheetRecordsImpl(d, records, mappings, userId)
+    stats = result.stats
+    return result.db
+  })
+  return stats
+}
+
+let inFlight: Promise<SheetSyncResult> | null = null
+
+export function runSheetSync(
+  conn: SheetConnection,
+  onProgress?: (p: SheetSyncProgress) => void,
+): Promise<SheetSyncResult> {
+  if (inFlight) return inFlight
+  inFlight = executeSheetSync(conn, onProgress).finally(() => {
+    inFlight = null
+  })
+  return inFlight
+}
+
+async function executeSheetSync(
   conn: SheetConnection,
   onProgress?: (p: SheetSyncProgress) => void,
 ): Promise<SheetSyncResult> {
@@ -633,6 +748,7 @@ export async function runSheetSync(
     onProgress?.({ phase: "applying", done: 0, total: records.length })
     const stats = applySheetRecords(records, conn.columnMappings, resolveUserId())
     Object.assign(result, stats)
+    autoMergeDuplicates()
     onProgress?.({ phase: "done", done: records.length, total: records.length })
   } catch (e) {
     result.error = e instanceof Error ? e.message : "Sheet sync failed"

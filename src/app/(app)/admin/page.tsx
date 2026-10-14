@@ -5,6 +5,7 @@ import type { Settings, User } from "@/types";
 import { updateDb, useDb, useSession } from "@/lib/store";
 import { userById } from "@/lib/selectors";
 import { formatDate, formatDateTime } from "@/lib/format";
+import { autoMergeDuplicates, duplicateOverview } from "@/lib/merge";
 import { Badge, Button, Card, EmptyState, PageHeader, Select } from "@/components/ui";
 
 interface PendingInvitation {
@@ -21,6 +22,7 @@ export default function AdminPage() {
   const db = useDb();
   const session = useSession();
   const [error, setError] = useState("");
+  const [mergeMsg, setMergeMsg] = useState<string | null>(null);
 
   const me = db.users.find((u) => u.id === session.userId) ?? null;
 
@@ -71,6 +73,22 @@ export default function AdminPage() {
   const auditFeed = [...db.interactions]
     .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
     .slice(0, 50);
+
+  const dupes = duplicateOverview(db);
+
+  function handleMerge() {
+    if (
+      !window.confirm(
+        `Merge ${dupes.propertyGroups} duplicate property group(s) and ${dupes.buyerGroups} duplicate buyer group(s)? Contacts and tasks will be re-linked to the kept records.`,
+      )
+    ) {
+      return;
+    }
+    const r = autoMergeDuplicates();
+    setMergeMsg(
+      `Merged ${r.propertiesMerged} propert${r.propertiesMerged === 1 ? "y" : "ies"}, ${r.buyersMerged} buyer${r.buyersMerged === 1 ? "" : "s"}, ${r.relationshipsMerged} duplicate link${r.relationshipsMerged === 1 ? "" : "s"}.`,
+    );
+  }
 
   return (
     <div>
@@ -147,6 +165,33 @@ export default function AdminPage() {
               </tbody>
             </table>
           </div>
+        </Card>
+
+        <Card>
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-800">Data hygiene</h2>
+              <p className="mt-0.5 text-xs text-slate-400">
+                Auto-merge also runs after every ElevateReg and Google Sheets sync.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              {dupes.total > 0 ? (
+                <span className="text-xs font-medium text-amber-600">
+                  {dupes.propertyGroups} duplicate propert{dupes.propertyGroups === 1 ? "y" : "ies"} ·{" "}
+                  {dupes.buyerGroups} duplicate buyer{dupes.buyerGroups === 1 ? "" : "s"} found
+                </span>
+              ) : (
+                <span className="text-xs text-emerald-600">No duplicates found</span>
+              )}
+              <Button variant="secondary" onClick={handleMerge} disabled={dupes.total === 0}>
+                Merge Duplicates
+              </Button>
+            </div>
+          </div>
+          {mergeMsg && (
+            <p className="border-t border-slate-100 px-4 py-3 text-sm text-emerald-700">{mergeMsg}</p>
+          )}
         </Card>
 
         <div className="grid gap-5 lg:grid-cols-3">

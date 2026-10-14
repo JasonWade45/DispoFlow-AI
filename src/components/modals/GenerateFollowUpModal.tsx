@@ -50,7 +50,8 @@ export default function GenerateFollowUpModal({
     try {
       const interactions = interactionsForPair(db, buyer.id, property.id);
       const offers = db.offers.filter((o) => o.buyerId === buyer.id && o.propertyId === property.id);
-      const result = await generateFollowUp({ buyer, property, interactions, offers, mode: m, variant: v });
+      const tasks = db.tasks.filter((t) => t.buyerId === buyer.id && t.propertyId === property.id);
+      const result = await generateFollowUp({ buyer, property, interactions, offers, tasks, mode: m, variant: v });
       setDraft(result);
       setVariant(v);
       setMessage(result.message);
@@ -65,8 +66,9 @@ export default function GenerateFollowUpModal({
     try {
       const interactions = interactionsForPair(db, buyer.id, property.id);
       const offers = db.offers.filter((o) => o.buyerId === buyer.id && o.propertyId === property.id);
+      const tasks = db.tasks.filter((t) => t.buyerId === buyer.id && t.propertyId === property.id);
       const result = await refineFollowUp(
-        { buyer, property, interactions, offers, mode, variant },
+        { buyer, property, interactions, offers, tasks, mode, variant },
         { ...draft, message },
         action,
       );
@@ -184,7 +186,7 @@ export default function GenerateFollowUpModal({
               ))}
             </Select>
           </Field>
-          <Button onClick={() => generate(variant)} disabled={!canGenerate || busy}>
+          <Button onClick={() => generate(draft ? variant + 1 : variant)} disabled={!canGenerate || busy}>
             {busy ? "Generating…" : draft ? "Regenerate" : "Generate Follow-Up"}
           </Button>
         </div>
