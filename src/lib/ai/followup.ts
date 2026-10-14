@@ -40,6 +40,20 @@ export interface FollowUpDraft {
   why: string;
   sources: string[];
   blockedReason: string | null;
+  engine?: "ai" | "templates";
+}
+
+export function blockedFollowUpReason(ctx: FollowUpContext): string | null {
+  if (ctx.buyer.status === "Do Not Contact") {
+    return "This buyer is marked Do Not Contact. No follow-up message will be suggested.";
+  }
+  if (ctx.property.status === "Sold" || ctx.property.status === "Cancelled") {
+    return `Property status is ${ctx.property.status}. Review the status before sending any marketing follow-up.`;
+  }
+  if (ctx.interactions.length === 0) {
+    return "No conversation history for this buyer on this property yet — log an interaction first.";
+  }
+  return null;
 }
 
 function lastInbound(interactions: Interaction[]): Interaction | undefined {
@@ -111,7 +125,7 @@ function normalizeMsg(s: string): string {
     .trim();
 }
 
-function messageFingerprint(message: string): string {
+export function messageFingerprint(message: string): string {
   const n = normalizeMsg(message);
   return n.slice(0, 60);
 }
@@ -444,39 +458,20 @@ function buildMessage(ctx: FollowUpContext): { message: string; why: string; sou
 export async function generateFollowUp(ctx: FollowUpContext): Promise<FollowUpDraft> {
   await delay(800 + Math.random() * 600);
 
-  if (ctx.buyer.status === "Do Not Contact") {
+  const blocked = blockedFollowUpReason(ctx);
+  if (blocked) {
     return {
       message: "",
       mode: ctx.mode,
       why: "",
       sources: [],
-      blockedReason:
-        "This buyer is marked Do Not Contact. No follow-up message will be suggested.",
-    };
-  }
-
-  if (ctx.property.status === "Sold" || ctx.property.status === "Cancelled") {
-    return {
-      message: "",
-      mode: ctx.mode,
-      why: "",
-      sources: [],
-      blockedReason: `Property status is ${ctx.property.status}. Review the status before sending any marketing follow-up.`,
-    };
-  }
-
-  if (ctx.interactions.length === 0) {
-    return {
-      message: "",
-      mode: ctx.mode,
-      why: "",
-      sources: [],
-      blockedReason: "No conversation history for this buyer on this property yet — log an interaction first.",
+      blockedReason: blocked,
+      engine: "templates",
     };
   }
 
   const { message, why, sources } = buildMessage(ctx);
-  return { message, mode: ctx.mode, why, sources, blockedReason: null };
+  return { message, mode: ctx.mode, why, sources, blockedReason: null, engine: "templates" };
 }
 
 export async function refineFollowUp(

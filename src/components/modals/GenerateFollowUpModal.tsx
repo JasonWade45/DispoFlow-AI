@@ -7,6 +7,7 @@ import {
   FOLLOW_UP_MODES,
   generateFollowUp,
   refineFollowUp,
+  type FollowUpContext,
   type FollowUpDraft,
   type FollowUpMode,
   type RefineAction,
@@ -14,6 +15,8 @@ import {
 import { addDaysIso, formatMoney, isFirst } from "@/lib/format";
 import { createTask } from "@/lib/actions";
 import { Badge, Button, Field, Input, Modal, Select, Spinner } from "@/components/ui";
+
+type Engine = "ai" | "templates";
 
 export default function GenerateFollowUpModal({
   open,
@@ -31,6 +34,7 @@ export default function GenerateFollowUpModal({
   const [buyerId, setBuyerId] = useState(defaultBuyerId ?? "");
   const [propertyId, setPropertyId] = useState(defaultPropertyId ?? "");
   const [mode, setMode] = useState<FollowUpMode>("Standard Follow-Up");
+  const [engine, setEngine] = useState<Engine>("ai");
   const [draft, setDraft] = useState<FollowUpDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [variant, setVariant] = useState(0);
@@ -39,19 +43,58 @@ export default function GenerateFollowUpModal({
   const [scheduled, setScheduled] = useState(false);
   const [date, setDate] = useState(addDaysIso(2));
   const [time, setTime] = useState("10:00");
+  const [aiError, setAiError] = useState<string | null>(null);
 
   const buyer = buyerById(db, buyerId || null);
   const property = propertyById(db, propertyId || null);
 
+  function context(): FollowUpContext | null {
+    if (!buyer || !property) return null;
+    return {
+      buyer,
+      property,
+      interactions: interactionsForPair(db, buyer.id, property.id),
+      offers: db.offers.filter((o) => o.buyerId === buyer.id && o.propertyId === property.id),
+      tasks: db.tasks.filter((t) => t.buyerId === buyer.id && t.propertyId === property.id),
+      mode,
+      variant,
+    };
+  }
+
+  async function generateViaAi(ctx: FollowUpContext): Promise<FollowUpDraft> {
+    const res = await fetch("/api/ai/followup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...ctx, variant }),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(data?.error ?? `AI request failed (${res.status})`);
+    }
+    return (await res.json()) as FollowUpDraft;
+  }
+
   async function generate(v = 0, m: FollowUpMode = mode) {
-    if (!buyer || !property) return;
+    const base = context();
+    if (!base) return;
     setBusy(true);
     setCopied(false);
+    setAiError(null);
+    const ctx: FollowUpContext = { ...base, mode: m, variant: v };
     try {
-      const interactions = interactionsForPair(db, buyer.id, property.id);
-      const offers = db.offers.filter((o) => o.buyerId === buyer.id && o.propertyId === property.id);
-      const tasks = db.tasks.filter((t) => t.buyerId === buyer.id && t.propertyId === property.id);
-      const result = await generateFollowUp({ buyer, property, interactions, offers, tasks, mode: m, variant: v });
+      let result: FollowUpDraft;
+      if (engine === "ai") {
+        try {
+          result = await generateViaAi(ctx);
+        } catch (err) {
+          setAiError(
+            `${err instanceof Error ? err.message : "AI unavailable"} — fell back to the template engine.`,
+          );
+          result = await generateFollowUp(ctx);
+        }
+      } else {
+        result = await generateFollowUp(ctx);
+      }
       setDraft(result);
       setVariant(v);
       setMessage(result.message);
@@ -61,17 +104,33 @@ export default function GenerateFollowUpModal({
   }
 
   async function refine(action: RefineAction) {
-    if (!buyer || !property || !draft) return;
+    const base = context();
+    if (!base || !draft) return;
     setBusy(true);
+    setAiError(null);
     try {
-      const interactions = interactionsForPair(db, buyer.id, property.id);
-      const offers = db.offers.filter((o) => o.buyerId === buyer.id && o.propertyId === property.id);
-      const tasks = db.tasks.filter((t) => t.buyerId === buyer.id && t.propertyId === property.id);
-      const result = await refineFollowUp(
-        { buyer, property, interactions, offers, tasks, mode, variant },
-        { ...draft, message },
-        action,
-      );
+      let result: FollowUpDraft;
+      if (engine === "ai") {
+        try {
+          const res = await fetch("/api/ai/followup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...base, variant, refine: action, currentMessage: message }),
+          });
+          if (!res.ok) {
+            const data = (await res.json().catch(() => null)) as { error?: string } | null;
+            throw new Error(data?.error ?? `AI request failed (${res.status})`);
+          }
+          result = (await res.json()) as FollowUpDraft;
+        } catch (err) {
+          setAiError(
+            `${err instanceof Error ? err.message : "AI unavailable"} — fell back to the template engine.`,
+          );
+          result = await refineFollowUp(base, { ...draft, message }, action);
+        }
+      } else {
+        result = await refineFollowUp(base, { ...draft, message }, action);
+      }
       if (action === "another") setVariant((n) => n + 1);
       setDraft(result);
       setMessage(result.message);
@@ -186,6 +245,18 @@ export default function GenerateFollowUpModal({
               ))}
             </Select>
           </Field>
+          <Field label="Engine" className="w-44">
+            <Select
+              value={engine}
+              onChange={(e) => {
+                setEngine(e.target.value as Engine);
+                setDraft(null);
+              }}
+            >
+              <option value="ai">AI (Groq)</option>
+              <option value="templates">Templates</option>
+            </Select>
+          </Field>
           <Button onClick={() => generate(draft ? variant + 1 : variant)} disabled={!canGenerate || busy}>
             {busy ? "Generating…" : draft ? "Regenerate" : "Generate Follow-Up"}
           </Button>
@@ -195,7 +266,13 @@ export default function GenerateFollowUpModal({
           <p className="text-xs text-slate-400">Select both a buyer and a property to generate a message.</p>
         )}
 
-        {busy && <Spinner label="Reading the conversation history…" />}
+        {aiError && (
+          <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">{aiError}</div>
+        )}
+
+        {busy && (
+          <Spinner label={engine === "ai" ? "Asking the AI writer…" : "Reading the conversation history…"} />
+        )}
 
         {draft && !busy && (
           <>
@@ -210,7 +287,10 @@ export default function GenerateFollowUpModal({
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                       Draft message
                     </span>
-                    <Badge label={draft.mode} />
+                    <span className="flex items-center gap-1.5">
+                      <Badge label={draft.engine === "ai" ? "Groq AI" : "Templates"} />
+                      <Badge label={draft.mode} />
+                    </span>
                   </div>
                   <textarea
                     value={message}
