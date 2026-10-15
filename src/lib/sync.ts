@@ -133,7 +133,19 @@ export interface SyncResult {
   newAddresses: string[]
 }
 
-export async function runElevateRegSync(
+let syncInFlight: Promise<SyncResult> | null = null
+
+export function runElevateRegSync(
+  onProgress?: (p: SyncProgress) => void,
+): Promise<SyncResult> {
+  if (syncInFlight) return syncInFlight
+  syncInFlight = executeElevateRegSync(onProgress).finally(() => {
+    syncInFlight = null
+  })
+  return syncInFlight
+}
+
+async function executeElevateRegSync(
   onProgress?: (p: SyncProgress) => void,
 ): Promise<SyncResult> {
   const result: SyncResult = {

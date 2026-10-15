@@ -450,6 +450,7 @@ describe("formatSheetSyncSummary", () => {
     const base = {
       created: 0, updated: 0, unchanged: 0, skipped: 0, missing: 0,
       buyersTouched: 0, offersTouched: 0, tasksTouched: 0, rowsRead: 12, error: null,
+      accessFilled: 0,
     };
     expect(formatSheetSyncSummary(base)).toContain("12 rows checked");
     expect(formatSheetSyncSummary({ ...base, created: 2, updated: 3 })).toContain("+2 new");

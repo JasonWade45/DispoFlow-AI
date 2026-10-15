@@ -3,6 +3,7 @@
 import {
   addImportHistory,
 } from "@/lib/actions"
+import { extractAccessLocal, formatAccess } from "@/lib/ai/access-info"
 import { autoMergeDuplicates } from "@/lib/merge"
 import { parseMoney, todayIso, uid } from "@/lib/format"
 import { OPEN_OFFER_STATUSES } from "@/lib/selectors"
@@ -56,7 +57,7 @@ export function splitAccessCode(rawZip: string): { zip: string; accessCode: stri
 }
 
 export interface SheetSyncProgress {
-  phase: "reading" | "applying" | "done"
+  phase: "reading" | "applying" | "extracting" | "done"
   done: number
   total: number
 }
@@ -75,6 +76,12 @@ export interface SheetApplyStats {
 export interface SheetSyncResult extends SheetApplyStats {
   rowsRead: number
   error: string | null
+  accessFilled: number
+}
+
+interface AccessCandidate {
+  propertyId: string
+  text: string
 }
 
 const EMPTY_STATS: SheetApplyStats = {
@@ -230,9 +237,10 @@ export function applySheetRecordsImpl(
   records: SheetRecord[],
   mappings: ColumnMapping[],
   userId: string,
-): { db: DB; stats: SheetApplyStats } {
+): { db: DB; stats: SheetApplyStats; accessCandidates: AccessCandidate[] } {
   const mapped = mappedSet(mappings)
   const stats: SheetApplyStats = { ...EMPTY_STATS }
+  const accessCandidates: AccessCandidate[] = []
   const ts = new Date().toISOString()
   const draft = cloneDraft(input)
   const orgId = draft.organization.id
@@ -310,6 +318,12 @@ export function applySheetRecordsImpl(
       }
       draft.properties.unshift(property)
       stats.created += 1
+      if (!property.accessInfo) {
+        accessCandidates.push({
+          propertyId: property.id,
+          text: [addressRaw, cell(record, "notes", mapped)].filter(Boolean).join(" · "),
+        })
+      }
     } else {
       const existing = draft.properties[pIdx]
       const patch: Partial<Property> = { lastSyncedAt: ts, syncStatus: "synced" }
@@ -403,6 +417,13 @@ export function applySheetRecordsImpl(
         property = { ...existing, ...patch, updatedAt: ts }
         draft.properties[pIdx] = property
         stats.updated += 1
+
+        if (!property.accessInfo) {
+          accessCandidates.push({
+            propertyId: property.id,
+            text: [addressRaw, cell(record, "notes", mapped)].filter(Boolean).join(" · "),
+          })
+        }
 
         if (statusVal) {
           pushSystemInteraction(
@@ -683,7 +704,7 @@ export function applySheetRecordsImpl(
   }
 
   stats.missing = countMissingFromSheet(draft, records)
-  return { db: draft, stats }
+  return { db: draft, stats, accessCandidates }
 }
 
 function countMissingFromSheet(db: DB, records: SheetRecord[]): number {
@@ -737,7 +758,7 @@ async function executeSheetSync(
   onProgress?: (p: SheetSyncProgress) => void,
 ): Promise<SheetSyncResult> {
   const startedAt = new Date().toISOString()
-  const result: SheetSyncResult = { ...EMPTY_STATS, rowsRead: 0, error: null }
+  const result: SheetSyncResult = { ...EMPTY_STATS, rowsRead: 0, error: null, accessFilled: 0 }
 
   try {
     onProgress?.({ phase: "reading", done: 0, total: 0 })
@@ -781,9 +802,20 @@ async function executeSheetSync(
     result.rowsRead = records.length
 
     onProgress?.({ phase: "applying", done: 0, total: records.length })
-    const stats = applySheetRecords(records, conn.columnMappings, resolveUserId())
-    Object.assign(result, stats)
+    let accessCandidates: AccessCandidate[] = []
+    updateDb((d) => {
+      const applied = applySheetRecordsImpl(d, records, conn.columnMappings, resolveUserId())
+      Object.assign(result, applied.stats)
+      accessCandidates = applied.accessCandidates
+      return applied.db
+    })
     autoMergeDuplicates()
+
+    if (accessCandidates.length > 0) {
+      onProgress?.({ phase: "extracting", done: 0, total: accessCandidates.length })
+      result.accessFilled = await enrichAccessInfo(accessCandidates)
+    }
+
     onProgress?.({ phase: "done", done: records.length, total: records.length })
   } catch (e) {
     result.error = e instanceof Error ? e.message : "Sheet sync failed"
@@ -795,6 +827,72 @@ async function executeSheetSync(
 
 function changedCount(r: SheetApplyStats): number {
   return r.created + r.updated + r.buyersTouched + r.offersTouched + r.tasksTouched
+}
+
+const ACCESS_AI_BATCH = 20
+
+async function enrichAccessInfo(candidates: AccessCandidate[]): Promise<number> {
+  if (candidates.length === 0) return 0
+  const findings = new Map<string, string>()
+
+  const pending: AccessCandidate[] = []
+  for (const c of candidates) {
+    const local = extractAccessLocal(c.text)
+    if (local) {
+      findings.set(c.propertyId, formatAccess(local))
+    } else {
+      pending.push(c)
+    }
+  }
+
+  for (let i = 0; i < pending.length; i += ACCESS_AI_BATCH) {
+    const batch = pending.slice(i, i + ACCESS_AI_BATCH)
+    try {
+      const res = await fetch("/api/ai/access-info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: batch.map((b) => ({ id: b.propertyId, text: b.text })),
+        }),
+      })
+      if (!res.ok) continue
+      const data = (await res.json()) as {
+        results?: Array<{ id: string; code: string | null; appointment: string | null }>
+      }
+      for (const r of data.results ?? []) {
+        const combined = formatAccess({ code: r.code, appointment: r.appointment })
+        if (combined) findings.set(r.id, combined)
+      }
+    } catch {
+      // AI unavailable — leave empty, local findings still apply
+    }
+  }
+
+  if (findings.size === 0) return 0
+  const now = new Date().toISOString()
+  updateDb((d) => ({
+    ...d,
+    properties: d.properties.map((p) =>
+      findings.has(p.id) ? { ...p, accessInfo: findings.get(p.id)!, updatedAt: now } : p,
+    ),
+    access_infoTable: (() => {
+      const table = [...d.access_infoTable]
+      for (const [propertyId, value] of findings) {
+        if (!table.some((t) => t.propertyId === propertyId)) {
+          table.push({
+            id: uid("ai_"),
+            orgId: d.organization.id,
+            propertyId,
+            accessCode: value,
+            createdAt: now,
+            updatedAt: now,
+          })
+        }
+      }
+      return table
+    })(),
+  }))
+  return findings.size
 }
 
 function finalizeSheetSync(
@@ -859,6 +957,7 @@ export function formatSheetSyncSummary(r: SheetSyncResult): string {
   if (r.buyersTouched > 0) parts.push(`${r.buyersTouched} buyer/links`)
   if (r.offersTouched > 0) parts.push(`${r.offersTouched} offers`)
   if (r.tasksTouched > 0) parts.push(`${r.tasksTouched} follow-ups`)
+  if (r.accessFilled > 0) parts.push(`${r.accessFilled} access filled`)
   if (parts.length === 0) return `Sheet up to date — ${r.rowsRead} rows checked`
   return `Sheet sync: ${parts.join(" · ")} (${r.rowsRead} rows)`
 }

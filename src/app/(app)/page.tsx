@@ -15,7 +15,6 @@ import {
 import { formatDate, formatMoney, formatTime, relativeTime, cx } from "@/lib/format";
 import { markSent } from "@/lib/actions";
 import { useModals } from "@/components/modals/ModalHost";
-import SyncBanner from "@/components/SyncBanner";
 import { Badge, Button, Card, PageHeader } from "@/components/ui";
 import type { Task } from "@/types";
 
@@ -268,8 +267,6 @@ export default function DashboardPage() {
           </>
         }
       />
-
-      <SyncBanner />
 
       {db.properties.length === 0 && (
         <Card className="mb-5 border-dashed px-6 py-8 text-center">

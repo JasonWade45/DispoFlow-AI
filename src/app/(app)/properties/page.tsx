@@ -114,6 +114,9 @@ function PropertyCard({ db, p }: { db: DB; p: Property }) {
           {p.city}
           {p.state ? `, ${p.state}` : ""} {p.zip}
         </p>
+        {p.accessInfo && (
+          <p className="mt-1 truncate text-xs font-medium text-amber-700">Access: {p.accessInfo}</p>
+        )}
         <div className="mt-1.5 flex items-center gap-2 text-[11px]">
           <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
             <StatusDot status={p.status} />
@@ -351,6 +354,9 @@ export default function PropertiesPage() {
                         >
                           {p.address}
                         </Link>
+                        {p.accessInfo && (
+                          <p className="mt-0.5 text-xs font-medium text-amber-700">Access: {p.accessInfo}</p>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-slate-600">
                         {p.city}, {p.state} {p.zip}

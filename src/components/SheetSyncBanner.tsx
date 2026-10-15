@@ -13,6 +13,7 @@ import {
 const PHASE_LABEL: Record<SheetSyncProgress["phase"], string> = {
   reading: "Reading Google Sheet…",
   applying: "Applying changes…",
+  extracting: "Extracting access info…",
   done: "Done",
 };
 
