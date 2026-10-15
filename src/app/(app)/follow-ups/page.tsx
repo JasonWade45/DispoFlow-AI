@@ -23,10 +23,18 @@ import {
   Tabs,
 } from "@/components/ui";
 
-const TABS = ["All", "Overdue", "Due", "Scheduled", "Needs Scheduling", "Completed", "Cancelled"];
+const TABS = ["All", "Drafts", "Overdue", "Due", "Scheduled", "Needs Scheduling", "Completed", "Cancelled"];
+
+const DRAFT_TASK_TYPE = "Send SMS";
+const DRAFT_PREFIX = "Follow-up draft:";
+
+function isAutoDraft(task: Task): boolean {
+  return task.taskType === DRAFT_TASK_TYPE && task.description.startsWith(DRAFT_PREFIX);
+}
 
 const EMPTY_TITLES: Record<string, string> = {
   All: "No follow-ups yet",
+  Drafts: "No pending drafts",
   Overdue: "Nothing overdue",
   Due: "Nothing due today",
   Scheduled: "Nothing scheduled",
@@ -36,6 +44,7 @@ const EMPTY_TITLES: Record<string, string> = {
 };
 
 const SUMMARY = [
+  { label: "Drafts", key: "Drafts", tone: "border-sky-200" },
   { label: "Overdue", key: "Overdue", tone: "border-rose-200" },
   { label: "Due", key: "Due", tone: "border-amber-200" },
   { label: "Needs Scheduling", key: "Needs Scheduling", tone: "border-purple-200" },
@@ -75,7 +84,10 @@ function FollowUps() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return rows.filter(({ task, status }) => {
-      if (activeTab === "All") {
+      if (activeTab === "Drafts") {
+        if (!isAutoDraft(task) || task.status === "Cancelled" || task.status === "Completed")
+          return false;
+      } else if (activeTab === "All") {
         if (task.status === "Cancelled") return false;
       } else if (status !== activeTab) {
         return false;
@@ -138,7 +150,7 @@ function FollowUps() {
         actions={<Button onClick={() => modals.createFollowUp()}>New Follow-Up</Button>}
       />
 
-      <div className="mb-5 grid grid-cols-3 gap-3">
+      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {SUMMARY.map((s) => (
           <button
             key={s.key}
@@ -200,6 +212,7 @@ function FollowUps() {
             const assigneeName = userById(db, task.assignedUserId)?.name ?? "Unassigned";
             const done = task.status === "Completed" || task.status === "Cancelled";
             const isMessage = task.taskType.toLowerCase().includes("message");
+            const draft = isAutoDraft(task) && !done;
             const propertyHref =
               task.propertyId && task.buyerId
                 ? `/properties/${task.propertyId}?buyer=${task.buyerId}`
@@ -214,6 +227,7 @@ function FollowUps() {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge label={status} />
+                    {draft && <Badge label="AI Draft" />}
                     {(task.priority === "High" || task.priority === "Urgent") && (
                       <Badge label={task.priority} />
                     )}
@@ -261,18 +275,32 @@ function FollowUps() {
                   )}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() =>
-                      modals.generateFollowUp({
-                        buyerId: task.buyerId,
-                        propertyId: task.propertyId,
-                      })
-                    }
-                  >
-                    Message
-                  </Button>
+                  {draft ? (
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        modals.generateFollowUp({
+                          buyerId: task.buyerId,
+                          propertyId: task.propertyId,
+                        })
+                      }
+                    >
+                      Review &amp; Send
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() =>
+                        modals.generateFollowUp({
+                          buyerId: task.buyerId,
+                          propertyId: task.propertyId,
+                        })
+                      }
+                    >
+                      Message
+                    </Button>
+                  )}
                   {!done && isMessage && (
                     <Button
                       size="sm"

@@ -12,6 +12,17 @@ let db = serverDb
 let session: Session = serverSession
 let hydrated = false
 
+// Cloud sync bookkeeping. localStorage stays the fast offline cache; Supabase
+// is the durable source of truth so data survives cache clears and follows the
+// user across devices.
+const DB_KEY = 'dispoflow_db_v2'
+const SESSION_KEY = 'dispoflow_session_v2'
+const SAVED_AT_KEY = 'dispoflow_db_v2_savedAt'
+let localSavedAt = ''
+let cloudChecked = false
+let suppressCloudSave = false
+let cloudSaveTimer: ReturnType<typeof setTimeout> | null = null
+
 interface StoredSession {
   userId: string | null
   user?: User | null
@@ -122,7 +133,7 @@ function hydrate(): void {
   if (hydrated || typeof window === 'undefined') return
   hydrated = true
   try {
-    const rawDb = window.localStorage.getItem('dispoflow_db_v2')
+    const rawDb = window.localStorage.getItem(DB_KEY)
     if (rawDb) {
       const parsed = JSON.parse(rawDb)
       if (parsed && Array.isArray(parsed.properties)) {
@@ -136,7 +147,8 @@ function hydrate(): void {
         }
       }
     }
-    const rawSession = window.localStorage.getItem('dispoflow_session_v2')
+    localSavedAt = window.localStorage.getItem(SAVED_AT_KEY) || ''
+    const rawSession = window.localStorage.getItem(SESSION_KEY)
     if (rawSession) {
       const parsed: StoredSession = JSON.parse(rawSession)
       if (parsed && typeof parsed.userId === 'string') {
@@ -146,6 +158,76 @@ function hydrate(): void {
   } catch {
     // corrupted storage — fall back to seed
   }
+  void syncFromCloud()
+}
+
+function normalizeCloudDb(parsed: Record<string, unknown>): DB {
+  const version = typeof parsed.version === 'number' ? parsed.version : 1
+  if (version === 3) return migrateV2toV3(parsed as unknown as DB)
+  if (version === 2) {
+    return migrateV2toV3({ ...(parsed as object), trelloConnections: parsed.trelloConnections || [] } as unknown as DB)
+  }
+  return migrateV2toV3(migrateV1toV2(parsed as Partial<DB> & Record<string, unknown>))
+}
+
+async function syncFromCloud(): Promise<void> {
+  if (cloudChecked || typeof window === 'undefined') return
+  cloudChecked = true
+  try {
+    const res = await fetch('/api/state')
+    if (!res.ok) return
+    const data = (await res.json()) as {
+      configured?: boolean
+      found?: boolean
+      db?: Record<string, unknown>
+      updatedAt?: string
+    }
+    if (!data.configured || !data.found || !data.db) return
+    const cloudAt = data.updatedAt || ''
+    // Only adopt the cloud copy when it is strictly newer than what we last
+    // saved locally; otherwise keep local (it may hold unsynced edits).
+    if (cloudAt && localSavedAt && cloudAt <= localSavedAt) return
+    db = normalizeCloudDb(data.db)
+    localSavedAt = cloudAt
+    try {
+      window.localStorage.setItem(DB_KEY, JSON.stringify(db))
+      window.localStorage.setItem(SAVED_AT_KEY, localSavedAt)
+    } catch {
+      // storage full — in-memory copy is still updated
+    }
+    suppressCloudSave = true
+    emit()
+    suppressCloudSave = false
+  } catch {
+    // offline / endpoint missing — localStorage remains the source of truth
+  }
+}
+
+function scheduleCloudSave(): void {
+  if (suppressCloudSave || typeof window === 'undefined') return
+  if (cloudSaveTimer) clearTimeout(cloudSaveTimer)
+  cloudSaveTimer = setTimeout(() => {
+    cloudSaveTimer = null
+    void (async () => {
+      try {
+        const res = await fetch('/api/state', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ db }),
+        })
+        if (res.ok) {
+          localSavedAt = new Date().toISOString()
+          try {
+            window.localStorage.setItem(SAVED_AT_KEY, localSavedAt)
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // offline — next successful emit retries
+      }
+    })()
+  }, 1500)
 }
 
 const listeners = new Set<() => void>()
@@ -153,11 +235,12 @@ const listeners = new Set<() => void>()
 function emit(): void {
   if (typeof window !== 'undefined') {
     try {
-      localStorage.setItem('dispoflow_db_v2', JSON.stringify(db))
-      localStorage.setItem('dispoflow_session_v2', JSON.stringify(session))
+      window.localStorage.setItem(DB_KEY, JSON.stringify(db))
+      window.localStorage.setItem(SESSION_KEY, JSON.stringify(session))
     } catch {
       // storage full / unavailable — keep in-memory state
     }
+    scheduleCloudSave()
   }
   listeners.forEach((l) => l())
 }

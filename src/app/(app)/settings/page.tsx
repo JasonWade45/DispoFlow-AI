@@ -178,6 +178,23 @@ export default function SettingsPage() {
     };
   }, []);
 
+  const [cloudStatus, setCloudStatus] = useState<"checking" | "saved" | "local">("checking");
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/state");
+        const data = (await res.json()) as { configured?: boolean };
+        if (!cancelled) setCloudStatus(data.configured ? "saved" : "local");
+      } catch {
+        if (!cancelled) setCloudStatus("local");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   function saveWorkspace() {
     const name = orgName.trim();
     if (!name) return;
@@ -336,6 +353,43 @@ export default function SettingsPage() {
                 </svg>
               </div>
             </Link>
+          </div>
+        </Card>
+
+        <Card>
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-semibold text-slate-800">Cloud backup &amp; daily sync</h2>
+            <p className="mt-0.5 text-xs text-slate-400">
+              Data is saved to Supabase and DispoGenius conversations sync every day
+            </p>
+          </div>
+          <div className="divide-y divide-slate-100">
+            <div className="flex items-center justify-between px-4 py-3">
+              <div>
+                <p className="text-sm font-medium text-slate-800">Cloud storage</p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  {cloudStatus === "saved"
+                    ? "Your CRM data is backed up to Supabase"
+                    : cloudStatus === "checking"
+                      ? "Checking cloud status…"
+                      : "Running on this device only (localStorage)"}
+                </p>
+              </div>
+              <Badge
+                label={
+                  cloudStatus === "saved" ? "Backed up" : cloudStatus === "checking" ? "Checking…" : "Local only"
+                }
+              />
+            </div>
+            <div className="flex items-center justify-between px-4 py-3">
+              <div>
+                <p className="text-sm font-medium text-slate-800">Daily DispoGenius sync</p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  Runs every day at ~8 AM, imports new messages, and drafts follow-ups
+                </p>
+              </div>
+              <Badge label="Scheduled daily" />
+            </div>
           </div>
         </Card>
 
