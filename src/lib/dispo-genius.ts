@@ -170,3 +170,29 @@ export function buildInteractionsFromDg(
   interactions.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
   return { interactions, summary };
 }
+
+export interface DgSendInput {
+  phone: string;
+  name: string;
+  email: string;
+  message: string;
+}
+
+export function validateDgSend(
+  raw: unknown,
+): { ok: true; value: DgSendInput } | { ok: false; error: string } {
+  if (typeof raw !== "object" || raw === null) return { ok: false, error: "Invalid JSON body" };
+  const b = raw as Record<string, unknown>;
+  const phone = typeof b.phone === "string" ? b.phone.trim() : "";
+  const message = typeof b.message === "string" ? b.message.trim() : "";
+  const name = typeof b.name === "string" ? b.name.trim() : "";
+  const email = typeof b.email === "string" ? b.email.trim() : "";
+  if (!message) return { ok: false, error: "Missing field: message" };
+  if (message.length > 1600) {
+    return { ok: false, error: "Message is too long (max 1600 characters)" };
+  }
+  if (normalizedDgPhone(phone).length < 10) {
+    return { ok: false, error: "Missing or invalid field: phone (need a 10+ digit number)" };
+  }
+  return { ok: true, value: { phone, name, email, message } };
+}

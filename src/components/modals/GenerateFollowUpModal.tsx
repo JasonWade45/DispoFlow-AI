@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDb, useSession } from "@/lib/store";
 import { buyerById, interactionsForPair, propertyById } from "@/lib/selectors";
 import {
@@ -13,10 +13,18 @@ import {
   type RefineAction,
 } from "@/lib/ai/followup";
 import { addDaysIso, formatMoney, isFirst } from "@/lib/format";
-import { createTask } from "@/lib/actions";
+import { createTask, logInteraction } from "@/lib/actions";
 import { Badge, Button, Field, Input, Modal, Select, Spinner } from "@/components/ui";
 
 type Engine = "ai" | "templates";
+
+function friendlySendError(msg: string): string {
+  if (msg.includes("not authorized for this scope")) {
+    return "DispoGenius token is missing send permissions. In DispoGenius → Settings → Private Integrations, enable: Send Conversation Messages (conversations/message.write) and Create Contacts (contacts.write), then Save.";
+  }
+  if (msg.includes("401")) return "DispoGenius rejected the token. Check DISPOGENIUS_PIT_TOKEN.";
+  return msg;
+}
 
 export default function GenerateFollowUpModal({
   open,
@@ -44,9 +52,35 @@ export default function GenerateFollowUpModal({
   const [date, setDate] = useState(addDaysIso(2));
   const [time, setTime] = useState("10:00");
   const [aiError, setAiError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const autoStarted = useRef(false);
 
   const buyer = buyerById(db, buyerId || null);
   const property = propertyById(db, propertyId || null);
+
+  useEffect(() => {
+    if (!open) return;
+    if (defaultBuyerId && !buyerId) setBuyerId(defaultBuyerId);
+    if (defaultPropertyId && !propertyId) setPropertyId(defaultPropertyId);
+  }, [open, defaultBuyerId, defaultPropertyId]);
+
+  useEffect(() => {
+    if (!open || !buyerId || propertyId) return;
+    const rel = db.relationships.find((r) => r.buyerId === buyerId);
+    if (rel) setPropertyId(rel.propertyId);
+  }, [open, buyerId, propertyId, db.relationships]);
+
+  useEffect(() => {
+    if (!open) {
+      autoStarted.current = false;
+      return;
+    }
+    if (autoStarted.current || !buyerId || !propertyId) return;
+    autoStarted.current = true;
+    void generate();
+  }, [open, buyerId, propertyId]);
 
   function context(): FollowUpContext | null {
     if (!buyer || !property) return null;
@@ -79,6 +113,8 @@ export default function GenerateFollowUpModal({
     if (!base) return;
     setBusy(true);
     setCopied(false);
+    setSent(false);
+    setSendError(null);
     setAiError(null);
     const ctx: FollowUpContext = { ...base, mode: m, variant: v };
     try {
@@ -108,6 +144,8 @@ export default function GenerateFollowUpModal({
     if (!base || !draft) return;
     setBusy(true);
     setAiError(null);
+    setSent(false);
+    setSendError(null);
     try {
       let result: FollowUpDraft;
       if (engine === "ai") {
@@ -149,6 +187,44 @@ export default function GenerateFollowUpModal({
     }
   }
 
+  async function send() {
+    if (!buyer || !property || !message.trim() || !buyer.phone) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      const res = await fetch("/api/dispo-genius/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: buyer.phone,
+          name: buyer.fullName,
+          email: buyer.email,
+          message,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) throw new Error(data?.error ?? `Send failed (${res.status})`);
+      const now = new Date().toISOString();
+      logInteraction({
+        buyerId: buyer.id,
+        propertyId: property.id,
+        eventType: "Outgoing SMS",
+        occurredAt: now,
+        recordedAt: now,
+        originalContent: message,
+        enhanced: null,
+        useEnhanced: false,
+        userId: session.userId ?? "u_owner",
+        outcome: "Sent via DispoGenius",
+      });
+      setSent(true);
+    } catch (e) {
+      setSendError(friendlySendError(e instanceof Error ? e.message : "Send failed"));
+    } finally {
+      setSending(false);
+    }
+  }
+
   function schedule() {
     if (!buyer || !property) return;
     createTask({
@@ -184,8 +260,17 @@ export default function GenerateFollowUpModal({
             </Button>
           )}
           {draft && !draft.blockedReason && (
-            <Button onClick={copy} variant="primary">
+            <Button onClick={copy} variant="secondary">
               {copied ? "Copied" : "Copy Message"}
+            </Button>
+          )}
+          {draft && !draft.blockedReason && (
+            <Button
+              variant="primary"
+              onClick={send}
+              disabled={sending || sent || busy || !message.trim() || !buyer?.phone}
+            >
+              {sending ? "Sending…" : sent ? "Sent ✓" : "Send SMS"}
             </Button>
           )}
         </>
@@ -294,7 +379,11 @@ export default function GenerateFollowUpModal({
                   </div>
                   <textarea
                     value={message}
-                    onChange={(e) => setMessage(e.target.value)}
+                    onChange={(e) => {
+                      setMessage(e.target.value);
+                      setSent(false);
+                      setSendError(null);
+                    }}
                     className="min-h-24 w-full resize-y rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-800 focus:border-slate-400 focus:outline-none"
                   />
                 </div>
@@ -338,23 +427,36 @@ export default function GenerateFollowUpModal({
                   </ul>
                 </div>
 
+                {sendError && (
+                  <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{sendError}</div>
+                )}
+
                 <div className="flex flex-wrap items-end gap-3 rounded-lg bg-emerald-50 p-3">
-                  <p className="w-full text-xs text-emerald-700">
-                    Nothing is sent automatically. Copy the message or schedule it as a task — then send
-                    it yourself and log the result.
-                  </p>
-                  {scheduled ? (
-                    <span className="text-xs font-medium text-emerald-700">
-                      Follow-up scheduled for {date} at {time}.
-                    </span>
+                  {sent ? (
+                    <p className="text-xs font-medium text-emerald-700">
+                      Sent to {buyer?.phone} via DispoGenius ✓ — logged to Activity.
+                    </p>
                   ) : (
                     <>
-                      <Field label="Follow-up date" className="w-40">
-                        <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-                      </Field>
-                      <Field label="Time" className="w-28">
-                        <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
-                      </Field>
+                      <p className="w-full text-xs text-emerald-700">
+                        Send goes through your DispoGenius SMS line and logs to Activity
+                        automatically. {buyer && !buyer.phone && "This buyer has no phone number — add one to send SMS."} Or copy
+                        the message / schedule it as a task.
+                      </p>
+                      {scheduled ? (
+                        <span className="text-xs font-medium text-emerald-700">
+                          Follow-up scheduled for {date} at {time}.
+                        </span>
+                      ) : (
+                        <>
+                          <Field label="Follow-up date" className="w-40">
+                            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                          </Field>
+                          <Field label="Time" className="w-28">
+                            <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+                          </Field>
+                        </>
+                      )}
                     </>
                   )}
                 </div>

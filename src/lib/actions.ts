@@ -324,6 +324,7 @@ export function logInteraction(input: {
   enhanced: EnhanceResult | null
   useEnhanced: boolean
   userId: string
+  outcome?: string
 }): string {
   const id = uid('i')
   const ts = nowIso()
@@ -348,7 +349,9 @@ export function logInteraction(input: {
       recordedAt: input.recordedAt,
       originalContent: input.originalContent,
       enhancedNotes: input.useEnhanced && input.enhanced ? input.enhanced.summary : '',
-      outcome: input.useEnhanced && input.enhanced ? input.enhanced.outcome : '',
+      outcome:
+        input.outcome ??
+        (input.useEnhanced && input.enhanced ? input.enhanced.outcome : ''),
       potentialOfferAmount:
         input.useEnhanced && input.enhanced ? input.enhanced.potentialOfferAmount : null,
       potentialOfferConfirmed: false,

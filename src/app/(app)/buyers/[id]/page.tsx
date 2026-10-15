@@ -171,7 +171,7 @@ function BuyerDetail({ buyer }: { buyer: Buyer }) {
               variant="secondary"
               onClick={() => modals.generateFollowUp({ buyerId: buyer.id })}
             >
-              Generate Follow-Up
+              Send Follow-Up
             </Button>
             <Button
               variant="secondary"

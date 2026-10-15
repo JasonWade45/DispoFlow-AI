@@ -4,6 +4,7 @@ import {
   dgDirection,
   findBuyerForConversation,
   mapDgEventType,
+  validateDgSend,
   type DgConversation,
   type DgPayload,
 } from "@/lib/dispo-genius";
@@ -232,5 +233,55 @@ describe("buildInteractionsFromDg", () => {
     expect(interactions).toHaveLength(1);
     expect(summary.imported).toBe(1);
     expect(summary.skipped).toBe(1);
+  });
+});
+
+describe("validateDgSend", () => {
+  it("accepts a valid phone and message, keeping name/email optional", () => {
+    const result = validateDgSend({
+      phone: "(555) 123-4567",
+      message: "  Still interested in selling?  ",
+      name: "Jane Roe",
+      email: "jane@example.com",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.phone).toBe("(555) 123-4567");
+      expect(result.value.message).toBe("Still interested in selling?");
+      expect(result.value.name).toBe("Jane Roe");
+      expect(result.value.email).toBe("jane@example.com");
+    }
+  });
+
+  it("accepts missing name and email", () => {
+    const result = validateDgSend({ phone: "+1 555 123 4567", message: "hi" });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.name).toBe("");
+      expect(result.value.email).toBe("");
+    }
+  });
+
+  it("rejects an empty body", () => {
+    const result = validateDgSend(null);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a missing message", () => {
+    const result = validateDgSend({ phone: "5551234567", message: "   " });
+    expect(result.ok).toBe(false);
+    if (result.ok === false) expect(result.error).toContain("message");
+  });
+
+  it("rejects a missing or too-short phone", () => {
+    const result = validateDgSend({ phone: "12345", message: "hello" });
+    expect(result.ok).toBe(false);
+    if (result.ok === false) expect(result.error).toContain("phone");
+  });
+
+  it("rejects an over-long message", () => {
+    const result = validateDgSend({ phone: "5551234567", message: "x".repeat(1601) });
+    expect(result.ok).toBe(false);
+    if (result.ok === false) expect(result.error).toContain("too long");
   });
 });
