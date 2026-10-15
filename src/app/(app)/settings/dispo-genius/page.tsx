@@ -10,7 +10,7 @@ type Status = "checking" | "connected" | "error";
 
 function friendlyError(msg: string): string {
   if (msg.includes("not authorized for this scope") || msg.includes("not accessible")) {
-    return "The token is missing permissions. In DispoGenius go to Settings → Private Integrations, edit the integration and enable: Conversations Message Read + Locations Read, then Save.";
+    return "The token is missing permissions. In DispoGenius go to Settings → Private Integrations, edit the integration and enable: View Conversations, View Conversation Messages, View Locations, Edit Conversation Messages, Edit Contacts, then Save.";
   }
   if (msg.includes("401")) {
     return "DispoGenius rejected the token. Create a new Private Integration token and update DISPOGENIUS_PIT_TOKEN.";
