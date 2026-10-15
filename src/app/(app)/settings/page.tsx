@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { DB, Settings } from "@/types";
 import { resetDemoData, updateDb, useDb, useSession } from "@/lib/store";
 import { Badge, Button, Card, Field, Input, PageHeader } from "@/components/ui";
@@ -161,6 +161,23 @@ export default function SettingsPage() {
   }
   const [notice, setNotice] = useState("");
 
+  const [dgStatus, setDgStatus] = useState<"checking" | "connected" | "error">("checking");
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/dispo-genius/conversations?check=1");
+        const data = (await res.json()) as { configured?: boolean };
+        if (!cancelled) setDgStatus(res.ok && data.configured ? "connected" : "error");
+      } catch {
+        if (!cancelled) setDgStatus("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   function saveWorkspace() {
     const name = orgName.trim();
     if (!name) return;
@@ -292,6 +309,28 @@ export default function SettingsPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Badge label={db.trelloConnections[0]?.isConnected ? "Connected" : "Not connected"} />
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-300">
+                  <path d="M9 18l6-6-6-6" />
+                </svg>
+              </div>
+            </Link>
+            <Link href="/settings/dispo-genius" className="flex items-center justify-between px-4 py-3 hover:bg-slate-50">
+              <div>
+                <p className="text-sm font-medium text-slate-800">DispoGenius</p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  Import customer conversations into Activity
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge
+                  label={
+                    dgStatus === "connected"
+                      ? "Connected"
+                      : dgStatus === "checking"
+                        ? "Checking…"
+                        : "Not connected"
+                  }
+                />
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-300">
                   <path d="M9 18l6-6-6-6" />
                 </svg>
