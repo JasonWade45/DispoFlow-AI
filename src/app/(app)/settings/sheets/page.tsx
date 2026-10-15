@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDb } from "@/lib/store";
 import { updateDb } from "@/lib/store";
 import { purgeSheetImport } from "@/lib/actions";
-import { detectPotentialDuplicates, type DB } from "@/lib/actions";
+import { detectPotentialDuplicates, mergeBuyers } from "@/lib/merge";
 import { importDispoData, type DispoImportPayload } from "@/lib/import-dispo";
 import type { ColumnMapping, SheetConnection } from "@/types";
 import { uid } from "@/lib/format";
@@ -555,9 +555,9 @@ export default function GoogleSheetsPage() {
                                 </td>
                                 <td className="px-2 py-2">
                                   <Button
-                                    variant="outline"
+                                    variant="secondary"
                                     size="sm"
-                                    onClick={() => mergeBuyers(dup.buyerId, dup.candidateBuyerId)}
+                                    onClick={() => mergeBuyers(dup.buyerId, dup.candidateBuyerId, dup.confidence)}
                                   >
                                     Merge
                                   </Button>

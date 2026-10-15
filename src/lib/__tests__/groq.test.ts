@@ -28,6 +28,7 @@ const property: Property = {
   city: "Austin",
   state: "TX",
   zip: "78701",
+  accessInfo: "",
   status: "Available",
   accessType: "",
   askingPrice: 150000,

@@ -44,6 +44,17 @@ export function normalizePropertyStatus(raw: string): string | null {
   return null
 }
 
+export function splitAccessCode(rawZip: string): { zip: string; accessCode: string | null } {
+  const match = rawZip.match(/LOCK BOX IS\s+(\d{1,6})/i)
+  if (match) {
+    return {
+      zip: rawZip.replace(/\s+LOCK BOX IS.*$/i, "").trim(),
+      accessCode: match[1],
+    }
+  }
+  return { zip: rawZip.trim(), accessCode: null }
+}
+
 export interface SheetSyncProgress {
   phase: "reading" | "applying" | "done"
   done: number
@@ -260,13 +271,15 @@ export function applySheetRecordsImpl(
     if (pIdx < 0) {
       const status = normalizePropertyStatus(record.status?.trim()) || "Available"
       const photosUrl = record.photosUrl?.trim() || ""
+      const { zip: cleanZip, accessCode } = splitAccessCode(parts?.zip ?? "")
       property = {
         id: uid("p_"),
         orgId,
         address: parts?.address ?? addressRaw,
         city: parts?.city ?? "",
         state: parts?.state ?? "",
-        zip: parts?.zip ?? "",
+        zip: cleanZip,
+        accessInfo: accessCode ?? "",
         status,
         accessType: "",
         askingPrice: parseMoney(record.askingPrice || ""),
@@ -304,16 +317,21 @@ export function applySheetRecordsImpl(
       let statusVal: string | null = null
 
       if (parts) {
+        const { zip: cleanZip, accessCode } = splitAccessCode(parts.zip)
         if (
           parts.address !== existing.address ||
           parts.city !== existing.city ||
           parts.state !== existing.state ||
-          parts.zip !== existing.zip
+          cleanZip !== existing.zip
         ) {
           patch.address = parts.address
           patch.city = parts.city
           patch.state = parts.state
-          patch.zip = parts.zip
+          patch.zip = cleanZip
+          changed = true
+        }
+        if (accessCode && accessCode !== existing.accessInfo) {
+          patch.accessInfo = accessCode
           changed = true
         }
       } else if (mapped.has("address") && addressRaw !== existing.address) {

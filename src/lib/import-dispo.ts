@@ -121,6 +121,7 @@ export function importDispoData(
           city: ip.city.trim(),
           state: (ip.state || "GA").trim().toUpperCase(),
           zip: ip.zip.trim(),
+          accessInfo: "",
           status: mapPropertyStatus(ip.status),
           accessType: "",
           askingPrice: null,

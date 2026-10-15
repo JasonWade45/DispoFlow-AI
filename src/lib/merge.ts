@@ -76,6 +76,48 @@ function computeBuyerConfidence(a: Buyer, b: Buyer): number {
   return Math.round((score / maxScore) * 100)
 }
 
+export interface PotentialDuplicate {
+  buyerId: string
+  candidateBuyerId: string
+  confidence: number
+  evidence: Array<{ field: string; existing: string; candidate: string }>
+}
+
+export function detectPotentialDuplicates(db: DB): PotentialDuplicate[] {
+  const buyers = db.buyers
+  const out: PotentialDuplicate[] = []
+  for (let i = 0; i < buyers.length; i++) {
+    for (let j = i + 1; j < buyers.length; j++) {
+      const a = buyers[i]
+      const b = buyers[j]
+      const evidence: PotentialDuplicate["evidence"] = []
+      let matches = 0
+      let comparable = 0
+
+      const compare = (field: string, av: string, bv: string, normalize: (v: string) => string) => {
+        if (!filledStr(av) || !filledStr(bv)) return
+        comparable += 1
+        if (normalize(av) === normalize(bv)) matches += 1
+        evidence.push({ field, existing: av.trim(), candidate: bv.trim() })
+      }
+
+      compare("phone", a.phone, b.phone, (v) => v.replace(/[^0-9+]/g, ""))
+      compare("email", a.email, b.email, (v) => v.toLowerCase().trim())
+      compare("companyName", a.companyName, b.companyName, (v) => v.toLowerCase().trim())
+      compare("fullName", a.fullName, b.fullName, (v) => v.toLowerCase().trim())
+
+      if (comparable === 0 || matches === 0) continue
+      const confidence = Math.round((matches / comparable) * 100)
+      out.push({ buyerId: a.id, candidateBuyerId: b.id, confidence, evidence })
+    }
+  }
+  return out.sort((x, y) => y.confidence - x.confidence)
+}
+
+function buyerById(db: DB, id: string): Buyer | undefined {
+  return db.buyers.find((b) => b.id === id)
+}
+
 export function mergeBuyers(buyerIdA: string, buyerIdB: string, threshold: number = 95): { merged: boolean; confidence: number; buyer: Buyer; reason: string } {
   const db = getDb()
   const a = buyerById(db, buyerIdA)
@@ -86,14 +128,16 @@ export function mergeBuyers(buyerIdA: string, buyerIdB: string, threshold: numbe
   if (confidence < threshold) return { merged: false, confidence, buyer: a, reason: `Confidence ${confidence}% is below threshold ${threshold}%` }
 
   const merged: Buyer = mergeBuyerField(a, b)
-  const dbUpdated = updateDb((db) => {
-    const idx = db.buyers.findIndex((b) => b.id === buyerIdB)
-    if (idx >= 0) {
-      db.buyers[idx] = { ...merged, updatedAt: new Date().toISOString() }
-    }
-    return db
+  const buyerMap = new Map<string, string>([[buyerIdB, buyerIdA]])
+  const propertyMap = new Map<string, string>()
+  updateDb((cur) => {
+    const remapped = remapAfterMerge(cur, buyerMap, propertyMap)
+    const buyers = cur.buyers
+      .map((x) => (x.id === buyerIdA ? { ...merged, updatedAt: new Date().toISOString() } : x))
+      .filter((x) => x.id !== buyerIdB)
+    return { ...cur, buyers, ...remapped }
   })
-  return { merged: true, confidence, buyer: dbUpdated.buyers.find((b) => b.id === buyerIdA) || merged, reason: `Merged with confidence ${confidence}%` }
+  return { merged: true, confidence, buyer: getDb().buyers.find((x) => x.id === buyerIdA) || merged, reason: `Merged with confidence ${confidence}%` }
 }
 
 function remapIds<T extends { buyerId: string | null; propertyId: string | null }>(
@@ -132,6 +176,41 @@ function dedupeRelationships(rels: BuyerProperty[]): BuyerProperty[] {
     byPair.set(key, merged)
   }
   return [...byPair.values()]
+}
+
+function remapAfterMerge(
+  db: DB,
+  buyerMap: Map<string, string>,
+  propertyMap: Map<string, string>,
+): { relationships: BuyerProperty[]; tasks: Task[]; offers: Offer[]; interactions: Interaction[]; relationshipsMerged: number } {
+  let relationships = remapIds(db.relationships, buyerMap, propertyMap)
+  const beforeRel = relationships.length
+  relationships = dedupeRelationships(relationships)
+
+  const remappedTasks = remapIds(db.tasks, buyerMap, propertyMap)
+  const openKeys = new Map<string, string>()
+  for (const t of remappedTasks) {
+    if (t.status === "Completed" || t.status === "Cancelled") continue
+    const key = `${t.buyerId ?? ""}::${t.propertyId ?? ""}::${t.taskType}::${t.dueDate ?? ""}`
+    const existing = openKeys.get(key)
+    if (!existing || t.id > existing) openKeys.set(key, t.id)
+  }
+  const tasks: Task[] = remappedTasks.map((t) => {
+    if (t.status === "Completed" || t.status === "Cancelled") return t
+    const key = `${t.buyerId ?? ""}::${t.propertyId ?? ""}::${t.taskType}::${t.dueDate ?? ""}`
+    if (openKeys.get(key) !== t.id) {
+      return { ...t, status: "Cancelled" as const, completionNotes: "Auto-cancelled duplicate task." }
+    }
+    return t
+  })
+
+  return {
+    relationships,
+    tasks,
+    offers: remapIds(db.offers, buyerMap, propertyMap),
+    interactions: remapIds(db.interactions, buyerMap, propertyMap),
+    relationshipsMerged: beforeRel - relationships.length,
+  }
 }
 
 function propertyGroups(db: DB): Map<string, Property[]> {
@@ -227,32 +306,18 @@ export function autoMergeDuplicates(): MergeSummary {
       buyers = buyers.filter((b) => !buyerMap.has(b.id))
     }
 
-    let relationships = remapIds(db.relationships, buyerMap, propertyMap)
-    const before = relationships.length
-    relationships = dedupeRelationships(relationships)
-    summary.relationshipsMerged = before - relationships.length
+    const remapped = remapAfterMerge(db, buyerMap, propertyMap)
+    summary.relationshipsMerged = remapped.relationshipsMerged
 
-    const remappedTasks = remapIds(db.tasks, buyerMap, propertyMap)
-    const openKeys = new Map<string, string>()
-    for (const t of remappedTasks) {
-      if (t.status === "Completed" || t.status === "Cancelled") continue
-      const key = `${t.buyerId ?? ""}::${t.propertyId ?? ""}::${t.taskType}::${t.dueDate ?? ""}`
-      const existing = openKeys.get(key)
-      if (!existing || t.id > existing) openKeys.set(key, t.id)
+    return {
+      ...db,
+      properties,
+      buyers,
+      relationships: remapped.relationships,
+      tasks: remapped.tasks,
+      offers: remapped.offers,
+      interactions: remapped.interactions,
     }
-    const tasks: Task[] = remappedTasks.map((t) => {
-      if (t.status === "Completed" || t.status === "Cancelled") return t
-      const key = `${t.buyerId ?? ""}::${t.propertyId ?? ""}::${t.taskType}::${t.dueDate ?? ""}`
-      if (openKeys.get(key) !== t.id) {
-        return { ...t, status: "Cancelled" as const, completionNotes: "Auto-cancelled duplicate task." }
-      }
-      return t
-    })
-
-    const offers: Offer[] = remapIds(db.offers, buyerMap, propertyMap)
-    const interactions: Interaction[] = remapIds(db.interactions, buyerMap, propertyMap)
-
-    return { ...db, properties, buyers, relationships, tasks, offers, interactions }
   })
 
   return summary

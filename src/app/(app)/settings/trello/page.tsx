@@ -289,6 +289,7 @@ export default function TrelloPage() {
               city: row.city,
               state: row.state,
               zip: row.zip,
+              accessInfo: "",
               status: row.status || "Available",
               accessType: "",
               askingPrice: row.askingPrice,

@@ -1,4 +1,5 @@
 import { delay } from "@/lib/format";
+import type { Buyer, Interaction, Property } from "@/types";
 
 export interface EnhanceContext {
   buyerName: string;
@@ -144,6 +145,7 @@ export function groqEnhance(input: {
     ambiguous: false,
   })
 }
+function extractAmount(text: string): number | null {
   const kMatch = text.match(/(?:\$|usd\s*)?(\d{1,3}(?:\.\d+)?)\s*k\b/i);
   if (kMatch) {
     const v = Number(kMatch[1]);

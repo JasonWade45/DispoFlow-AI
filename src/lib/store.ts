@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import type { DB, Property, BuyerProperty, Task, Session, User } from '@/types'
+import type { AccessInfoEntry, DB, Property, BuyerProperty, Task, Session, User } from '@/types'
 import { createSeed } from './seed-work'
+import { uid } from './format'
 
 const serverDb = createSeed()
 const serverSession: Session = { userId: null, user: null }
@@ -38,6 +39,7 @@ function migrateV1toV2(parsed: Partial<DB> & Record<string, unknown>): DB {
       firstImportedAt: null,
       lastSyncedAt: null,
       syncStatus: 'never',
+      accessInfo: '',
       ...p,
     })),
     relationships: ((parsed.relationships as BuyerProperty[] | undefined) || []).map((r) => ({
@@ -60,25 +62,26 @@ function migrateV1toV2(parsed: Partial<DB> & Record<string, unknown>): DB {
   }
 }
 
-function migrateV2toV3(parsed: Partial<DB> & Record<string, unknown>): DB {
-  const base = { ...parsed, version: 3, access_infoTable: [] as any }
-  const properties = ((parsed.properties as Property[] | undefined) || [])
-  const accessMap = new Map<Property['id'], AccessInfoEntry>()
+function migrateV2toV3(parsed: DB | (Partial<DB> & Record<string, unknown>)): DB {
+  const base: Record<string, unknown> = { ...parsed, version: 3 }
+  const existing = (parsed.access_infoTable as AccessInfoEntry[] | undefined) || []
+  const accessMap = new Map<string, AccessInfoEntry>(existing.map((e) => [e.propertyId, e]))
+  const properties = (parsed.properties as Property[] | undefined) || []
   for (const p of properties) {
-    if (p.accessInfo && p.accessInfo.trim()) {
-      const id = uid(`ai_${p.id}`)
+    const code = typeof p.accessInfo === 'string' ? p.accessInfo.trim() : ''
+    if (code && !accessMap.has(p.id)) {
       accessMap.set(p.id, {
-        id,
+        id: uid(`ai_${p.id}`),
         orgId: p.orgId,
         propertyId: p.id,
-        accessCode: p.accessInfo.trim(),
-        createdAt: p.lastSyncedAt || new Date().toISOString(),
-        updatedAt: p.lastSyncedAt || new Date().toISOString(),
+        accessCode: code,
+        createdAt: p.lastSyncedAt || p.updatedAt || new Date().toISOString(),
+        updatedAt: p.lastSyncedAt || p.updatedAt || new Date().toISOString(),
       })
     }
   }
-  ;(base as any).access_infoTable = Array.from(accessMap.values())
-  return base as DB
+  base.access_infoTable = Array.from(accessMap.values())
+  return base as unknown as DB
 }
 
 export function cleanupAccessInfo() {
@@ -123,11 +126,13 @@ function hydrate(): void {
     if (rawDb) {
       const parsed = JSON.parse(rawDb)
       if (parsed && Array.isArray(parsed.properties)) {
-        if (parsed.version === 2) {
-          db = { ...parsed, trelloConnections: parsed.trelloConnections || [] }
-          db = migrateV2toV3(db)
-        } else if (parsed.version === 3) {
+        const version = typeof parsed.version === 'number' ? parsed.version : 1
+        if (version === 3) {
           db = migrateV2toV3(parsed)
+        } else if (version === 2) {
+          db = migrateV2toV3({ ...parsed, trelloConnections: parsed.trelloConnections || [] })
+        } else {
+          db = migrateV2toV3(migrateV1toV2(parsed))
         }
       }
     }

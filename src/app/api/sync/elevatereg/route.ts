@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { scrapeElevateRegListings } from '@/lib/scraper/elevatereg'
 
 export const maxDuration = 60
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
     const { searchParams } = new URL(request.url)
     const pages = Math.min(Number(searchParams.get('pages') ?? '36'), 36)

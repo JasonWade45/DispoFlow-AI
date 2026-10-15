@@ -198,6 +198,7 @@ export async function runElevateRegSync(
       city: parts.city,
       state: parts.state,
       zip: parts.zip,
+      accessInfo: "",
       status: statusFromBadge(card.statusBadge),
       accessType: "",
       askingPrice: card.price,
