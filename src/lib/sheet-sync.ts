@@ -12,7 +12,6 @@ import {
   buildRecords,
   columnLetterToIndex,
   indexToColumnLetter,
-  looksLikeStreetAddress,
   type SheetRecord,
 } from "@/lib/sheet-mapping"
 import type {
@@ -28,6 +27,22 @@ import type {
 } from "@/types"
 
 export const SHEET_SYNC_INTERVAL_MS = 5 * 60 * 1000
+
+export const PROPERTY_STATUS_VALUES = [
+  "Available",
+  "Marketing",
+  "Offer Received",
+  "Under Contract",
+  "Pending",
+  "Sold",
+  "On Hold",
+  "Cancelled",
+] as const
+
+export function normalizePropertyStatus(raw: string): string | null {
+  if (PROPERTY_STATUS_VALUES.includes(raw as any)) return raw
+  return null
+}
 
 export interface SheetSyncProgress {
   phase: "reading" | "applying" | "done"
@@ -78,31 +93,6 @@ function resolveUserId(): string {
 
 function mappedSet(mappings: ColumnMapping[]): Set<string> {
   return new Set(mappings.map((m) => m.logicalField))
-}
-
-const PROPERTY_STATUS_VALUES = [
-  "Available",
-  "Marketing",
-  "Offer Received",
-  "Under Contract",
-  "Pending",
-  "Sold",
-  "On Hold",
-  "Cancelled",
-] as const
-
-function normalizePropertyStatus(raw: string): string | null {
-  const v = raw.trim().toLowerCase()
-  if (!v) return null
-  return PROPERTY_STATUS_VALUES.find((s) => s.toLowerCase() === v) ?? null
-}
-
-const ACCESS_INFO_PATTERN = /LOCK BOX IS\s+(\d{1,6})/
-
-function extractAccessInfo(raw: string): string {
-  const m = raw.match(ACCESS_INFO_PATTERN)
-  if (m) return `Lock Box ${m[1]}`
-  return ""
 }
 
 function cell(record: SheetRecord, field: string, mapped: Set<string>): string {
@@ -220,6 +210,10 @@ function pushSystemInteraction(
   })
 }
 
+function looksLikeStreetAddress(raw: string): boolean {
+  return /^\d+\s+\S/.test(raw.trim())
+}
+
 export function applySheetRecordsImpl(
   input: DB,
   records: SheetRecord[],
@@ -262,11 +256,9 @@ export function applySheetRecordsImpl(
     }
 
     let property: Property
-    const rawAddress = (parts?.address ?? addressRaw) || ""
-    const accessInfo = extractAccessInfo(rawAddress)
 
     if (pIdx < 0) {
-      const status = normalizePropertyStatus(record.status ?? "") ?? "Available"
+      const status = normalizePropertyStatus(record.status?.trim()) || "Available"
       const photosUrl = record.photosUrl?.trim() || ""
       property = {
         id: uid("p_"),
@@ -275,7 +267,6 @@ export function applySheetRecordsImpl(
         city: parts?.city ?? "",
         state: parts?.state ?? "",
         zip: parts?.zip ?? "",
-        accessInfo,                       // NEW: extracted lockbox info, masked in UI
         status,
         accessType: "",
         askingPrice: parseMoney(record.askingPrice || ""),
@@ -312,87 +303,78 @@ export function applySheetRecordsImpl(
       let changed = false
       let statusVal: string | null = null
 
-const carried = record.carried === true
-
-      if (!carried) {
-        if (parts) {
-          if (
-            parts.address !== existing.address ||
-            parts.city !== existing.city ||
-            parts.state !== existing.state ||
-            parts.zip !== existing.zip
-          ) {
-            patch.address = parts.address
-            patch.city = parts.city
-            patch.state = parts.state
-            patch.zip = parts.zip
-            // Re-extract accessInfo when address/ZIP changes
-            const rawAddress = parts.address || ""
-            patch.accessInfo = extractAccessInfo(rawAddress)
-            changed = true
-          }
-        } else if (mapped.has("address") && addressRaw !== existing.address) {
-          patch.address = addressRaw
-          // Re-extract accessInfo when address changes via header mapping
-          patch.accessInfo = extractAccessInfo(addressRaw)
+      if (parts) {
+        if (
+          parts.address !== existing.address ||
+          parts.city !== existing.city ||
+          parts.state !== existing.state ||
+          parts.zip !== existing.zip
+        ) {
+          patch.address = parts.address
+          patch.city = parts.city
+          patch.state = parts.state
+          patch.zip = parts.zip
           changed = true
         }
-}
-        const sheetStatus = cell(record, "status", mapped)
-        const statusNorm = sheetStatus ? normalizePropertyStatus(sheetStatus) : null
-        if (statusNorm && statusNorm !== existing.status) {
-          statusVal = statusNorm
-          patch.status = statusNorm
-          patch.marketingStartedAt =
-            statusNorm === "Marketing" && !existing.marketingStartedAt
-              ? ts
-              : existing.marketingStartedAt
+      } else if (mapped.has("address") && addressRaw !== existing.address) {
+        patch.address = addressRaw
+        changed = true
+      }
+
+      const sheetStatus = cell(record, "status", mapped)
+      const normalizedStatus = normalizePropertyStatus(sheetStatus)
+      if (normalizedStatus && normalizedStatus !== existing.status) {
+        statusVal = normalizedStatus
+        patch.status = normalizedStatus
+        patch.marketingStartedAt =
+          normalizedStatus === "Marketing" && !existing.marketingStartedAt
+            ? ts
+            : existing.marketingStartedAt
+        changed = true
+      }
+
+      const asking = cell(record, "askingPrice", mapped)
+      if (asking) {
+        const v = parseMoney(asking)
+        if (v !== null && v !== existing.askingPrice) {
+          patch.askingPrice = v
           changed = true
         }
+      }
 
-        const asking = cell(record, "askingPrice", mapped)
-        if (asking) {
-          const v = parseMoney(asking)
-          if (v !== null && v !== existing.askingPrice) {
-            patch.askingPrice = v
-            changed = true
-          }
-        }
-
-        const arv = cell(record, "arv", mapped)
-        if (arv) {
-          const v = parseMoney(arv)
-          if (v !== null && v !== existing.arv) {
-            patch.arv = v
-            changed = true
-          }
-        }
-
-        const listing = cell(record, "listingUrl", mapped)
-        if (listing && listing !== existing.listingUrl) {
-          patch.listingUrl = listing
+      const arv = cell(record, "arv", mapped)
+      if (arv) {
+        const v = parseMoney(arv)
+        if (v !== null && v !== existing.arv) {
+          patch.arv = v
           changed = true
         }
+      }
 
-        const photos = cell(record, "photosUrl", mapped)
-        if (photos && photos !== existing.photosUrl) {
-          patch.photosUrl = photos
-          if (!existing.photos.includes(photos)) {
-            patch.photos = [photos, ...existing.photos].slice(0, 20)
-          }
-          changed = true
-        }
+      const listing = cell(record, "listingUrl", mapped)
+      if (listing && listing !== existing.listingUrl) {
+        patch.listingUrl = listing
+        changed = true
+      }
 
-        const notes = cell(record, "notes", mapped)
-        if (notes && notes !== existing.notes) {
-          patch.notes = notes
-          changed = true
+      const photos = cell(record, "photosUrl", mapped)
+      if (photos && photos !== existing.photosUrl) {
+        patch.photosUrl = photos
+        if (!existing.photos.includes(photos)) {
+          patch.photos = [photos, ...existing.photos].slice(0, 20)
         }
+        changed = true
+      }
 
-        if (!existing.sourceRowId) {
-          patch.sourceRowId = String(record._row)
-          changed = true
-        }
+      const notes = cell(record, "notes", mapped)
+      if (notes && notes !== existing.notes) {
+        patch.notes = notes
+        changed = true
+      }
+
+      if (existing.sourceRowId !== String(record._row)) {
+        patch.sourceRowId = String(record._row)
+        changed = true
       }
       if (!existing.sourceWebsite) {
         patch.sourceWebsite = "google-sheets"
@@ -764,7 +746,7 @@ async function executeSheetSync(
       (max, m) => Math.max(max, columnLetterToIndex(m.columnLetter)),
       25,
     )
-    const endCol = indexToColumnLetter(Math.min(Math.max(maxColIdx, 25), 59))
+    const endCol = indexToColumnLetter(Math.min(Math.max(maxColIdx, 25), 51))
     const range = `${conn.worksheetName}!A1:${endCol}${rowCount}`
 
     const res = await fetch("/api/sheets/inspect", {
@@ -777,9 +759,7 @@ async function executeSheetSync(
       throw new Error(data.detail || data.error || "Failed to read worksheet")
     }
 
-    const records = buildRecords(data.headers ?? [], data.rows ?? [], conn.columnMappings, 2, {
-      carryAddress: conn.groupedRows === true,
-    })
+    const records = buildRecords(data.headers ?? [], data.rows ?? [], conn.columnMappings)
     result.rowsRead = records.length
 
     onProgress?.({ phase: "applying", done: 0, total: records.length })

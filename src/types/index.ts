@@ -313,8 +313,10 @@ export interface DB {
   trelloConnections: TrelloConnection[];
   importHistory: ImportHistoryEntry[];
   syncJobs: SyncJob[];
+  access_infoTable: AccessInfoEntry[];
 }
 
+export interface AccessInfoEntry { id: string; orgId: string; propertyId: string; accessCode: string; createdAt: string; updatedAt: string; }
 export interface Session {
   userId: ID | null;
   user: User | null;

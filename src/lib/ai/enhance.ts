@@ -78,7 +78,72 @@ const INFO_PATTERNS = [
   "what's the",
 ];
 
-function extractAmount(text: string): number | null {
+function extractLockbox(raw: string): { code: string | null; cleanAddress: string } {
+  const match = raw.match(/LOCK BOX IS\s+(\d{1,6})/i)
+  if (match) {
+    const code = match[1]
+    const clean = raw.replace(/\s+LOCK BOX IS.*$/i, '').trim()
+    return { code, cleanAddress: clean }
+  }
+  return { code: null, cleanAddress: raw.trim() }
+}
+
+function normalizePhone(v: string): string {
+  return (v || "").replace(/[^0-9+]/g, "")
+}
+
+function normalizeEmail(v: string): string {
+  return (v || "").toLowerCase().trim()
+}
+
+function normalizeName(v: string): string {
+  return (v || "").trim()
+}
+
+function flagImpossibleValues(property: Property): string[] {
+  const issues: string[] = []
+  // Check ZIP format (should be 5 digits)
+  const zipMatch = property.zip.match(/^\d{5}(-\d{4})?$/)
+  if (!zipMatch && property.zip && property.zip !== "") {
+    issues.push("ZIP format invalid")
+  }
+  // Check state format (should be 2 letters)
+  const stateMatch = property.state.match(/^[A-Z]{2}$/)
+  if (!stateMatch && property.state && property.state !== "") {
+    issues.push("State format invalid")
+  }
+  // Check if price is reasonable (basic check)
+  if (property.askingPrice && property.askingPrice < 1000) {
+    issues.push("Asking price unusually low")
+  }
+  if (property.arv && property.arv < 1000) {
+    issues.push("ARV unusually low")
+  }
+  return issues
+}
+
+export function buildEnhanceContext(property: Property, buyer: Buyer): EnhanceContext {
+  return {
+    buyerName: buyer.fullName,
+    propertyAddress: property.address,
+  }
+}
+
+export function groqEnhance(input: {
+  property: Property
+  buyer: Buyer
+  interaction?: Interaction
+}): Promise<EnhanceResult> {
+  // TODO: Implement Groq API call
+  return Promise.resolve({
+    summary: "",
+    outcome: "",
+    potentialOfferAmount: null,
+    nextAction: "",
+    missingInfo: [],
+    ambiguous: false,
+  })
+}
   const kMatch = text.match(/(?:\$|usd\s*)?(\d{1,3}(?:\.\d+)?)\s*k\b/i);
   if (kMatch) {
     const v = Number(kMatch[1]);

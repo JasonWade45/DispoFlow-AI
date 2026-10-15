@@ -60,6 +60,61 @@ function migrateV1toV2(parsed: Partial<DB> & Record<string, unknown>): DB {
   }
 }
 
+function migrateV2toV3(parsed: Partial<DB> & Record<string, unknown>): DB {
+  const base = { ...parsed, version: 3, access_infoTable: [] as any }
+  const properties = ((parsed.properties as Property[] | undefined) || [])
+  const accessMap = new Map<Property['id'], AccessInfoEntry>()
+  for (const p of properties) {
+    if (p.accessInfo && p.accessInfo.trim()) {
+      const id = uid(`ai_${p.id}`)
+      accessMap.set(p.id, {
+        id,
+        orgId: p.orgId,
+        propertyId: p.id,
+        accessCode: p.accessInfo.trim(),
+        createdAt: p.lastSyncedAt || new Date().toISOString(),
+        updatedAt: p.lastSyncedAt || new Date().toISOString(),
+      })
+    }
+  }
+  ;(base as any).access_infoTable = Array.from(accessMap.values())
+  return base as DB
+}
+
+export function cleanupAccessInfo() {
+  hydrate()
+  const db = getDb()
+  let changed = false
+  for (const p of db.properties) {
+    const zipMatch = p.zip.match(/LOCK BOX IS\s+(\d{1,6})/i)
+    if (zipMatch) {
+      const accessCode = zipMatch[1]
+      const numericZip = p.zip.replace(/\s+LOCK BOX IS.*$/i, '').trim()
+      // Update property zip and accessInfo
+      const idx = db.properties.findIndex((q) => q.id === p.id)
+      if (idx >= 0) {
+        db.properties[idx] = { ...db.properties[idx], zip: numericZip, accessInfo: accessCode }
+        changed = true
+      }
+      // Also add to access_infoTable if not already there
+      const existing = db.access_infoTable.find((a) => a.propertyId === p.id)
+      if (!existing) {
+        ;(db.access_infoTable as any).push({
+          id: uid(`ai_${p.id}`),
+          orgId: p.orgId,
+          propertyId: p.id,
+          accessCode,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+        changed = true
+      }
+    }
+  }
+  if (changed) emit()
+  return changed
+}
+
 function hydrate(): void {
   if (hydrated || typeof window === 'undefined') return
   hydrated = true
@@ -70,8 +125,9 @@ function hydrate(): void {
       if (parsed && Array.isArray(parsed.properties)) {
         if (parsed.version === 2) {
           db = { ...parsed, trelloConnections: parsed.trelloConnections || [] }
-        } else {
-          db = migrateV1toV2(parsed)
+          db = migrateV2toV3(db)
+        } else if (parsed.version === 3) {
+          db = migrateV2toV3(parsed)
         }
       }
     }

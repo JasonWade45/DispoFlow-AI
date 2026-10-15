@@ -66,6 +66,36 @@ function mergeBuyerField<T extends Buyer>(keep: T, dup: T): T {
   return out as T
 }
 
+function computeBuyerConfidence(a: Buyer, b: Buyer): number {
+  let score = 0
+  const maxScore = 4 // phone, email, companyName, fullName
+  if (a.phone && b.phone && a.phone.replace(/[^0-9+]/g, "") === b.phone.replace(/[^0-9+]/g, "")) score += 1
+  if (a.email && b.email && a.email.toLowerCase() === b.email.toLowerCase()) score += 1
+  if (a.companyName && b.companyName && a.companyName.toLowerCase() === b.companyName.toLowerCase()) score += 1
+  if (a.fullName && b.fullName && a.fullName.toLowerCase() === b.fullName.toLowerCase()) score += 1
+  return Math.round((score / maxScore) * 100)
+}
+
+export function mergeBuyers(buyerIdA: string, buyerIdB: string, threshold: number = 95): { merged: boolean; confidence: number; buyer: Buyer; reason: string } {
+  const db = getDb()
+  const a = buyerById(db, buyerIdA)
+  const b = buyerById(db, buyerIdB)
+  if (!a || !b) return { merged: false, confidence: 0, buyer: a || b || { id: "", orgId: "", fullName: "", companyName: "", phone: "", email: "", preferredContactMethod: "", preferredMarkets: [], propertyTypes: [], budgetMin: null, budgetMax: null, status: "Active", notes: "", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), createdBy: "", } as Buyer, reason: "Buyer not found" }
+
+  const confidence = computeBuyerConfidence(a, b)
+  if (confidence < threshold) return { merged: false, confidence, buyer: a, reason: `Confidence ${confidence}% is below threshold ${threshold}%` }
+
+  const merged: Buyer = mergeBuyerField(a, b)
+  const dbUpdated = updateDb((db) => {
+    const idx = db.buyers.findIndex((b) => b.id === buyerIdB)
+    if (idx >= 0) {
+      db.buyers[idx] = { ...merged, updatedAt: new Date().toISOString() }
+    }
+    return db
+  })
+  return { merged: true, confidence, buyer: dbUpdated.buyers.find((b) => b.id === buyerIdA) || merged, reason: `Merged with confidence ${confidence}%` }
+}
+
 function remapIds<T extends { buyerId: string | null; propertyId: string | null }>(
   rows: T[],
   buyerMap: Map<string, string>,

@@ -19,7 +19,7 @@ export const seedSettings: Settings = {
 
 export function createSeed(): DB {
   return {
-    version: 2,
+    version: 3,
     organization: { id: ORG_ID, name: "Summit Property Buyers", createdAt: ts(120) },
     users: seedUsers,
     properties: [],  // accessInfo will be empty string by default
@@ -33,5 +33,6 @@ export function createSeed(): DB {
     trelloConnections: [],
     importHistory: [],
     syncJobs: [],
-  };
+    access_infoTable: [],
+  }
 }
