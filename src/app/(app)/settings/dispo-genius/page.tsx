@@ -8,6 +8,16 @@ import { Badge, Button, Card, PageHeader } from "@/components/ui";
 
 type Status = "checking" | "connected" | "error";
 
+function friendlyError(msg: string): string {
+  if (msg.includes("not authorized for this scope") || msg.includes("not accessible")) {
+    return "The token is missing permissions. In DispoGenius go to Settings → Private Integrations, edit the integration and enable: Conversations Message Read + Locations Read, then Save.";
+  }
+  if (msg.includes("401")) {
+    return "DispoGenius rejected the token. Create a new Private Integration token and update DISPOGENIUS_PIT_TOKEN.";
+  }
+  return msg;
+}
+
 export default function DispoGeniusPage() {
   const db = useDb();
   const session = useSession();
@@ -29,7 +39,7 @@ export default function DispoGeniusPage() {
           setLocationId(data.locationId || "");
         } else {
           setStatus("error");
-          setError(data.error || `Check failed (${res.status})`);
+          setError(friendlyError(data.error || `Check failed (${res.status})`));
         }
       } catch {
         if (!cancelled) {
@@ -64,7 +74,7 @@ export default function DispoGeniusPage() {
       setResult(summary);
       setStatus("connected");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sync failed");
+      setError(friendlyError(e instanceof Error ? e.message : "Sync failed"));
     } finally {
       setSyncing(false);
     }
