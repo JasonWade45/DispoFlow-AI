@@ -175,7 +175,7 @@ function FollowUps() {
           message,
         }),
       });
-      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      const data = (await res.json().catch((): string | null => null)) as { error?: string } | null;
       if (!res.ok) throw new Error(data?.error ?? `Send failed (${res.status})`);
       const now = new Date().toISOString();
       logInteraction({

@@ -133,7 +133,7 @@ export default function TrelloPage() {
 
   useEffect(() => {
     if (credsSaved) {
-      const t = window.setTimeout(() => void fetchBoards(), 0);
+      const t = window.setTimeout((): void => void fetchBoards(), 0);
       return () => window.clearTimeout(t);
     }
   }, [credsSaved, fetchBoards]);

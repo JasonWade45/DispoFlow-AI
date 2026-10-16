@@ -34,7 +34,7 @@ function migrateV1toV2(parsed: Partial<DB> & Record<string, unknown>): DB {
     ...base,
     ...parsed,
     version: 2,
-    properties: ((parsed.properties as Property[] | undefined) || []).map((p) => ({
+    properties: ((parsed.properties as Property[] | undefined) || []).map((p): Property => ({
       propertyType: '',
       bedrooms: '',
       bathrooms: '',
@@ -53,7 +53,7 @@ function migrateV1toV2(parsed: Partial<DB> & Record<string, unknown>): DB {
       accessInfo: '',
       ...p,
     })),
-    relationships: ((parsed.relationships as BuyerProperty[] | undefined) || []).map((r) => ({
+    relationships: ((parsed.relationships as BuyerProperty[] | undefined) || []).map((r): BuyerProperty => ({
       lastContactedAt: null,
       lastMessageSentAt: null,
       lastCallAt: null,
@@ -61,7 +61,7 @@ function migrateV1toV2(parsed: Partial<DB> & Record<string, unknown>): DB {
       sourceRowId: '',
       ...r,
     })),
-    tasks: ((parsed.tasks as Task[] | undefined) || []).map((t) => ({
+    tasks: ((parsed.tasks as Task[] | undefined) || []).map((t): Task => ({
       completedVia: t.status === 'Completed' ? 'complete' : t.status === 'Cancelled' ? 'cancelled' : null,
       sentAt: null,
       ...t,

@@ -14,6 +14,7 @@ import {
   isSheetSyncDue,
   parseSheetDate,
 } from "@/lib/sheet-sync";
+import type { SheetSyncResult } from "@/lib/sheet-sync";
 import {
   autoMap,
   buildRecords,
@@ -455,7 +456,7 @@ describe("isSheetSyncDue", () => {
 
 describe("formatSheetSyncSummary", () => {
   it("summarizes changes and errors", () => {
-    const base = {
+    const base: SheetSyncResult = {
       created: 0, updated: 0, unchanged: 0, skipped: 0, missing: 0,
       buyersTouched: 0, offersTouched: 0, tasksTouched: 0, rowsRead: 12, error: null,
       accessFilled: 0,

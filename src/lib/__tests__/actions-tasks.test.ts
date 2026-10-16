@@ -3,6 +3,7 @@ import { createSeed } from "@/lib/seed-work";
 import { getDb, updateDb } from "@/lib/store";
 import { addBuyer, addProperty, completeTask, createTask, linkBuyerToProperty, markSent } from "@/lib/actions";
 import { taskStatus } from "@/lib/selectors";
+import type { Task } from "@/types";
 
 function reset() {
   localStorage.clear();
@@ -155,7 +156,7 @@ describe("markSent vs completeTask", () => {
 
 describe("taskStatus", () => {
   it("returns Needs Scheduling when no dueDate", () => {
-    const t = {
+    const t: Task = {
       id: "t1",
       orgId: "o",
       buyerId: null,
@@ -178,7 +179,7 @@ describe("taskStatus", () => {
   });
 
   it("returns Completed for completed tasks regardless of due date", () => {
-    const t = {
+    const t: Task = {
       id: "t2",
       orgId: "o",
       buyerId: null,
@@ -202,7 +203,7 @@ describe("taskStatus", () => {
 
   it("returns Overdue for past-due open tasks", () => {
     const now = new Date("2026-10-12T12:00:00");
-    const t = {
+    const t: Task = {
       id: "t3",
       orgId: "o",
       buyerId: null,
