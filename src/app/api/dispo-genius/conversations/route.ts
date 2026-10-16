@@ -1,7 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GhlError, fetchDgPayload } from "@/lib/dispo-genius-server";
+import { GhlError, fetchDgPayload, ghlGet, resolveLocationId } from "@/lib/dispo-genius-server";
 
 export const maxDuration = 60;
+
+/** Lightweight probe: resolves the location and asks for a single conversation — no message export. */
+async function checkDgConnection(token: string, explicitLocation: string): Promise<string> {
+  const locationId = await resolveLocationId(token, explicitLocation);
+  await ghlGet("/conversations/search", token, ["2021-04-15", "v3"], {
+    locationId,
+    limit: "1",
+    sortBy: "last_message_date",
+    sort: "desc",
+  });
+  return locationId;
+}
 
 export async function GET(request: NextRequest) {
   const token = process.env.DISPOGENIUS_PIT_TOKEN;
@@ -21,8 +33,11 @@ export async function GET(request: NextRequest) {
     url.searchParams.get("locationId") || process.env.DISPOGENIUS_LOCATION_ID || "";
 
   try {
+    if (check) {
+      const locationId = await checkDgConnection(token, explicitLocation);
+      return NextResponse.json({ configured: true, locationId });
+    }
     const payload = await fetchDgPayload(token, explicitLocation);
-    if (check) return NextResponse.json({ configured: true, locationId: payload.locationId });
     return NextResponse.json(payload);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to reach DispoGenius";
