@@ -258,6 +258,77 @@ export function ensureBuyersFromConversations(
   return { db: created > 0 ? { ...db, buyers } : db, created };
 }
 
+/** Strips stray wrapping quotes/whitespace that sheets and CRMs sometimes leave on names. */
+export function cleanBuyerName(raw: string): string {
+  return (raw || "").trim().replace(/^["'\u201C\u201D\u2018\u2019]+|["'\u201C\u201D\u2018\u2019]+$/g, "").trim();
+}
+
+/** True when fullName carries no real person name (empty, dash, just a phone number, just an email). */
+export function isPlaceholderName(fullName: string, phone?: string, email?: string): boolean {
+  const name = (fullName || "").trim();
+  if (!name) return true;
+  if (/^[-\u2013\u2014_.]+$/i.test(name)) return true;
+  const low = name.toLowerCase();
+  if (low === "n/a" || low === "na" || low === "unknown" || low === "none") return true;
+  const digits = name.replace(/\D/g, "");
+  const phoneDigits = (phone || "").replace(/\D/g, "");
+  if (digits.length >= 7 && /^[\d\s\-()+.]+$/.test(name)) return true;
+  if (phoneDigits && digits === phoneDigits) return true;
+  if (name.includes("@") && !/\s/.test(name)) return true;
+  return false;
+}
+
+export interface DgNameEnrichResult {
+  db: DB;
+  updated: number;
+}
+
+/**
+ * Fills missing/placeholder buyer names (phone-as-name, "-", empty) from
+ * DispoGenius conversation names matched by phone, then email — sheet rows
+ * often carry only a phone number. Also strips stray quotes from real names.
+ * Pure: returns a new DB without mutating the input.
+ */
+export function enrichBuyerNamesFromConversations(
+  db: DB,
+  payload: DgPayload,
+  now: string,
+): DgNameEnrichResult {
+  const byPhone = new Map<string, string>();
+  const byEmail = new Map<string, string>();
+  for (const conv of payload.conversations) {
+    const name = cleanBuyerName(conv.name);
+    if (!name || isPlaceholderName(name, conv.phone, conv.email)) continue;
+    const pk = phoneKey(conv.phone);
+    if (pk.length >= 7 && !byPhone.has(pk)) byPhone.set(pk, name);
+    const em = (conv.email || "").trim().toLowerCase();
+    if (em && !byEmail.has(em)) byEmail.set(em, name);
+  }
+  if (byPhone.size === 0 && byEmail.size === 0) return { db, updated: 0 };
+
+  let updated = 0;
+  const buyers = db.buyers.map((b) => {
+    const cleaned = cleanBuyerName(b.fullName);
+    const placeholder = isPlaceholderName(b.fullName, b.phone, b.email);
+    let next = "";
+    if (placeholder) {
+      const pk = phoneKey(b.phone);
+      next =
+        (pk.length >= 7 ? byPhone.get(pk) : undefined) ??
+        byEmail.get((b.email || "").trim().toLowerCase()) ??
+        "";
+      if (!next && !isPlaceholderName(cleaned, b.phone, b.email)) next = cleaned;
+    } else {
+      next = cleaned;
+    }
+    if (!next || next === b.fullName) return b;
+    updated += 1;
+    return { ...b, fullName: next, updatedAt: now };
+  });
+
+  return { db: updated > 0 ? { ...db, buyers } : db, updated };
+}
+
 export interface DgRelinkResult {
   interactions: Interaction[];
   relinked: number;

@@ -344,6 +344,7 @@ describe("formatDailySyncSummary", () => {
         conversations: 1,
         draftsSkipped: 0,
         relinked: 0,
+        namesEnriched: 0,
       }),
     ).toBe("1 new message · 1 follow-up draft");
     expect(
@@ -357,6 +358,7 @@ describe("formatDailySyncSummary", () => {
         conversations: 5,
         draftsSkipped: 0,
         relinked: 0,
+        namesEnriched: 0,
       }),
     ).toBe("5 new messages · 2 follow-up drafts · 3 new buyers");
   });
@@ -373,6 +375,7 @@ describe("formatDailySyncSummary", () => {
         conversations: 4,
         draftsSkipped: 0,
         relinked: 7,
+        namesEnriched: 0,
       }),
     ).toBe("0 new messages · 1 follow-up draft · 2 new buyers · 7 old messages relinked");
   });

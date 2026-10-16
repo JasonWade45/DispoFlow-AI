@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildInteractionsFromDg,
+  cleanBuyerName,
   dgDirection,
+  enrichBuyerNamesFromConversations,
   ensureBuyersFromConversations,
   findBuyerForConversation,
   inferPropertyForBuyer,
+  isPlaceholderName,
   mapDgEventType,
   relinkDgInteractions,
   validateDgSend,
@@ -395,6 +398,94 @@ describe("relinkDgInteractions", () => {
     // old buyer id no longer exists → falls back to the conversation match
     expect(r.relinked).toBe(1);
     expect(r.interactions[0].buyerId).toBe("b_1");
+  });
+});
+
+describe("enrichBuyerNamesFromConversations", () => {
+  const now = "2026-10-16T12:00:00.000Z";
+
+  function makeDbWith(buyers: Buyer[]): DB {
+    return { organization: { id: "org_1" }, buyers, interactions: [] } as unknown as DB;
+  }
+
+  it("fills placeholder names from conversation names matched by phone", () => {
+    const db = makeDbWith([
+      buyer({ id: "b_1", fullName: "(404) 447-2321", phone: "(404) 447-2321" }),
+      buyer({ id: "b_2", fullName: "-", phone: "(555) 999-0000" }),
+      buyer({ id: "b_3", fullName: "Real Name", phone: "(555) 111-2222" }),
+    ]);
+    const p = payload([
+      conv({ name: "Alice Smith", phone: "+14044472321", email: "" }),
+      conv({ id: "c_2", name: "Bob Jones", phone: "+15559990000", email: "" }),
+      conv({ id: "c_3", name: "Charlie Brown", phone: "+15551112222", email: "" }),
+    ]);
+
+    const r = enrichBuyerNamesFromConversations(db, p, now);
+    expect(r.updated).toBe(2);
+    const names = Object.fromEntries(r.db.buyers.map((b) => [b.id, b.fullName]));
+    expect(names.b_1).toBe("Alice Smith");
+    expect(names.b_2).toBe("Bob Jones");
+    expect(names.b_3).toBe("Real Name"); // unchanged
+  });
+
+  it("strips wrapping quotes from real names", () => {
+    const db = makeDbWith([buyer({ id: "b_1", fullName: '" raquel"', phone: "(555) 123-4567" })]);
+    const p = payload([conv({ name: " raquel ", phone: "+15551234567", email: "" })]);
+    const r = enrichBuyerNamesFromConversations(db, p, now);
+    expect(r.updated).toBe(1);
+    expect(r.db.buyers[0].fullName).toBe("raquel");
+  });
+
+  it("falls back to email when phone does not match", () => {
+    const db = makeDbWith([
+      buyer({ id: "b_1", fullName: "n/a", phone: "(555) 000-0000", email: "x@y.com" }),
+    ]);
+    const p = payload([conv({ name: "Dana Lee", phone: "+15550001111", email: "x@y.com" })]);
+    const r = enrichBuyerNamesFromConversations(db, p, now);
+    expect(r.updated).toBe(1);
+    expect(r.db.buyers[0].fullName).toBe("Dana Lee");
+  });
+
+  it("does nothing when no conversations have usable names", () => {
+    const db = makeDbWith([buyer({ id: "b_1", fullName: "(404) 447-2321", phone: "(404) 447-2321" })]);
+    const p = payload([conv({ name: "(404) 447-2321", phone: "+14044472321", email: "" })]);
+    const r = enrichBuyerNamesFromConversations(db, p, now);
+    expect(r.updated).toBe(0);
+    expect(r.db).toBe(db);
+  });
+
+  it("is pure: does not mutate the input db", () => {
+    const b = buyer({ id: "b_1", fullName: "-", phone: "(555) 123-4567" });
+    const db = makeDbWith([b]);
+    const p = payload([conv({ name: "Jane Roe", phone: "+15551234567", email: "" })]);
+    enrichBuyerNamesFromConversations(db, p, now);
+    expect(db.buyers[0].fullName).toBe("-");
+  });
+});
+
+describe("isPlaceholderName", () => {
+  it("flags phone-as-name, dashes, empty, and email-as-name", () => {
+    expect(isPlaceholderName("(404) 447-2321", "(404) 447-2321")).toBe(true);
+    expect(isPlaceholderName("404-447-2321", "")).toBe(true);
+    expect(isPlaceholderName("-", "")).toBe(true);
+    expect(isPlaceholderName("--", "")).toBe(true);
+    expect(isPlaceholderName("n/a", "")).toBe(true);
+    expect(isPlaceholderName("", "")).toBe(true);
+    expect(isPlaceholderName("someone@example.com", "")).toBe(true);
+  });
+
+  it("accepts real names", () => {
+    expect(isPlaceholderName("Jane Roe", "(555) 123-4567")).toBe(false);
+    expect(isPlaceholderName("John", "")).toBe(false);
+  });
+});
+
+describe("cleanBuyerName", () => {
+  it("strips wrapping quotes and whitespace", () => {
+    expect(cleanBuyerName('" raquel"')).toBe("raquel");
+    expect(cleanBuyerName("  'Bob'  ")).toBe("Bob");
+    expect(cleanBuyerName("Jane Roe")).toBe("Jane Roe");
+    expect(cleanBuyerName("")).toBe("");
   });
 });
 

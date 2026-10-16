@@ -1,6 +1,7 @@
 import type { DB, Interaction, Task } from "@/types";
 import {
   buildInteractionsFromDg,
+  enrichBuyerNamesFromConversations,
   ensureBuyersFromConversations,
   relinkDgInteractions,
   type DgPayload,
@@ -33,6 +34,7 @@ export interface DailySyncResult {
   draftsCreated: number;
   draftsSkipped: number;
   buyersCreated: number;
+  namesEnriched: number;
   relinked: number;
 }
 
@@ -52,14 +54,15 @@ export async function runDailySync(
   const useAi = opts.useAi ?? isGroqConfigured();
 
   const withBuyers = ensureBuyersFromConversations(db, payload, userId, now);
-  const { interactions, summary } = buildInteractionsFromDg(payload, withBuyers.db, userId, now);
-  const relink = relinkDgInteractions(withBuyers.db, payload);
+  const enriched = enrichBuyerNamesFromConversations(withBuyers.db, payload, now);
+  const { interactions, summary } = buildInteractionsFromDg(payload, enriched.db, userId, now);
+  const relink = relinkDgInteractions(enriched.db, payload);
   const relinkedById = new Map(relink.interactions.map((i) => [i.id, i]));
   const mergedInteractions: Interaction[] = [
-    ...withBuyers.db.interactions.map((i) => relinkedById.get(i.id) ?? i),
+    ...enriched.db.interactions.map((i) => relinkedById.get(i.id) ?? i),
     ...interactions,
   ];
-  const draftDb: DB = { ...withBuyers.db, interactions: mergedInteractions };
+  const draftDb: DB = { ...enriched.db, interactions: mergedInteractions };
 
   // Buyers referenced by the newly imported or relinked interactions that have a relationship (property context).
   const candidateBuyerIds = new Set<string>();
@@ -71,7 +74,7 @@ export async function runDailySync(
   }
 
   const existingOpenDraftBuyers = new Set(
-    withBuyers.db.tasks
+    enriched.db.tasks
       .filter(
         (t) =>
           t.taskType === FOLLOW_UP_TASK_TYPE &&
@@ -94,7 +97,7 @@ export async function runDailySync(
     }
     if (!needsFollowUp(draftDb, buyerId)) continue;
 
-    const buyer = withBuyers.db.buyers.find((b) => b.id === buyerId);
+    const buyer = enriched.db.buyers.find((b) => b.id === buyerId);
     if (!buyer) continue;
     // Pick the first relationship for property context.
     const relationship = db.relationships.find((r) => r.buyerId === buyerId);
@@ -183,6 +186,7 @@ export async function runDailySync(
       draftsCreated,
       draftsSkipped,
       buyersCreated: withBuyers.created,
+      namesEnriched: enriched.updated,
       relinked: relink.relinked,
     },
   };
@@ -194,6 +198,7 @@ export function formatDailySyncSummary(r: DailySyncResult): string {
     `${r.draftsCreated} follow-up draft${r.draftsCreated === 1 ? "" : "s"}`,
   ];
   if (r.buyersCreated > 0) parts.push(`${r.buyersCreated} new buyer${r.buyersCreated === 1 ? "" : "s"}`);
+  if (r.namesEnriched > 0) parts.push(`${r.namesEnriched} name${r.namesEnriched === 1 ? "" : "s"} filled`);
   if (r.relinked > 0) parts.push(`${r.relinked} old message${r.relinked === 1 ? "" : "s"} relinked`);
   return parts.join(" · ");
 }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
   buildInteractionsFromDg,
+  enrichBuyerNamesFromConversations,
   ensureBuyersFromConversations,
   relinkDgInteractions,
   type DgPayload,
@@ -33,6 +34,7 @@ export default function DispoGeniusPage() {
   const [syncing, setSyncing] = useState(false);
   const [result, setResult] = useState<DgSyncSummary | null>(null);
   const [buyersCreated, setBuyersCreated] = useState(0);
+  const [namesEnriched, setNamesEnriched] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +67,7 @@ export default function DispoGeniusPage() {
     setError("");
     setResult(null);
     setBuyersCreated(0);
+    setNamesEnriched(0);
     try {
       const res = await fetch("/api/dispo-genius/conversations");
       const data = (await res.json()) as { error?: string };
@@ -73,14 +76,23 @@ export default function DispoGeniusPage() {
       const now = new Date().toISOString();
       const userId = session.userId ?? "u_owner";
       const withBuyers = ensureBuyersFromConversations(db, payload, userId, now);
-      const newBuyers = withBuyers.db.buyers.filter((b) => !db.buyers.some((x) => x.id === b.id));
-      const { interactions, summary } = buildInteractionsFromDg(payload, withBuyers.db, userId, now);
-      const relink = relinkDgInteractions(withBuyers.db, payload);
+      const enriched = enrichBuyerNamesFromConversations(withBuyers.db, payload, now);
+      const newBuyers = enriched.db.buyers.filter((b) => !db.buyers.some((x) => x.id === b.id));
+      const { interactions, summary } = buildInteractionsFromDg(payload, enriched.db, userId, now);
+      const relink = relinkDgInteractions(enriched.db, payload);
       const relinkedById = new Map(relink.interactions.map((i) => [i.id, i]));
-      if (newBuyers.length > 0 || interactions.length > 0 || relink.interactions.length > 0) {
+      const enrichedById = new Map(enriched.db.buyers.map((b) => [b.id, b]));
+      if (
+        newBuyers.length > 0 ||
+        enriched.updated > 0 ||
+        interactions.length > 0 ||
+        relink.interactions.length > 0
+      ) {
         updateDb((d) => ({
           ...d,
-          buyers: [...d.buyers, ...newBuyers.filter((nb) => !d.buyers.some((x) => x.id === nb.id))],
+          buyers: d.buyers.map((b) => enrichedById.get(b.id) ?? b).concat(
+            newBuyers.filter((nb) => !d.buyers.some((x) => x.id === nb.id)),
+          ),
           interactions: [
             ...d.interactions.map((i) => relinkedById.get(i.id) ?? i),
             ...interactions.filter((i) => !d.interactions.some((x) => x.id === i.id)),
@@ -89,6 +101,7 @@ export default function DispoGeniusPage() {
       }
       setResult({ ...summary, relinked: relink.relinked });
       setBuyersCreated(newBuyers.length);
+      setNamesEnriched(enriched.updated);
       setStatus("connected");
     } catch (e) {
       setError(friendlyError(e instanceof Error ? e.message : "Sync failed"));
@@ -171,6 +184,11 @@ export default function DispoGeniusPage() {
                 {buyersCreated > 0 && (
                   <>
                     {" "}· created <strong>{buyersCreated}</strong> new buyer{buyersCreated === 1 ? "" : "s"}
+                  </>
+                )}
+                {namesEnriched > 0 && (
+                  <>
+                    {" "}· filled <strong>{namesEnriched}</strong> missing name{namesEnriched === 1 ? "" : "s"} from conversations
                   </>
                 )}
                 {(result.relinked ?? 0) > 0 && (
