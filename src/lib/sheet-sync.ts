@@ -463,6 +463,9 @@ export function applySheetRecordsImpl(
     const name = cell(record, "buyerName", mapped)
     const phone = cell(record, "buyerPhone", mapped)
     const email = cell(record, "buyerEmail", mapped)
+    // buildRecords stores buyerSource under `source`; grouped sheets also fill
+    // it from the address column on buyer rows ("Dipo Genuis", "Facebook", …).
+    const leadSource = record.source?.trim() || ""
     let buyerId: string | null = null
 
     if (name || phone || email) {
@@ -472,6 +475,7 @@ export function applySheetRecordsImpl(
         if (name && name !== found.fullName) patch.fullName = name
         if (phone && phone !== found.phone) patch.phone = phone
         if (email && email !== found.email) patch.email = email
+        if (leadSource && leadSource !== found.source) patch.source = leadSource
         if (Object.keys(patch).length > 0) {
           const idx = draft.buyers.findIndex((b) => b.id === found.id)
           draft.buyers[idx] = { ...found, ...patch, updatedAt: ts }
@@ -493,6 +497,7 @@ export function applySheetRecordsImpl(
           budgetMax: null,
           status: "Active",
           notes: "",
+          source: leadSource,
           createdAt: ts,
           updatedAt: ts,
           createdBy: userId,

@@ -16,6 +16,7 @@ export const LOGICAL_FIELDS: LogicalField[] = [
   { key: "buyerName", label: "Buyer Name" },
   { key: "buyerPhone", label: "Buyer Phone" },
   { key: "buyerEmail", label: "Buyer Email" },
+  { key: "buyerSource", label: "Lead Source" },
   { key: "interestStatus", label: "Buyer-Property Interest Status" },
   { key: "offerAmount", label: "Offer Amount" },
   { key: "lastContactDate", label: "Last Contact Date" },
@@ -37,6 +38,7 @@ export const HEADER_ALIASES: Record<string, string[]> = {
   buyerName: ["buyer name", "buyer", "name", "contact name", "full name"],
   buyerPhone: ["buyer phone", "phone", "phone number", "mobile", "cell"],
   buyerEmail: ["buyer email", "email", "email address", "e-mail"],
+  buyerSource: ["source", "lead source", "channel", "origin", "how heard", "lead origin"],
   interestStatus: ["interest status", "interest", "buyer status", "relationship status"],
   offerAmount: ["offer amount", "offer", "offer price", "submitted offer"],
   lastContactDate: ["last contact date", "last contact", "last touch", "last touch date"],
@@ -138,6 +140,7 @@ export interface SheetRecord {
   buyerName: string;
   buyerPhone: string;
   buyerEmail: string;
+  source: string;
   interestStatus: string;
   offerAmount: string;
   lastContactDate: string;
@@ -161,6 +164,7 @@ export function emptyRecord(row: number): SheetRecord {
     buyerName: "",
     buyerPhone: "",
     buyerEmail: "",
+    source: "",
     interestStatus: "",
     offerAmount: "",
     lastContactDate: "",
@@ -180,8 +184,10 @@ export function buildRecords(
   firstDataRow = 2,
   opts: BuildRecordsOptions = {},
 ): SheetRecord[] {
+  const fieldKey = (logical: string): string =>
+    logical === "buyerSource" ? "source" : logical;
   const usable = mappings
-    .map((m) => ({ field: m.logicalField, index: mappingColumnIndex(headers, m) }))
+    .map((m) => ({ field: fieldKey(m.logicalField), index: mappingColumnIndex(headers, m) }))
     .filter((m) => m.index >= 0 && m.field in emptyRecord(0));
 
   let lastAddress = "";
@@ -195,6 +201,9 @@ export function buildRecords(
       if (looksLikeStreetAddress(record.address)) {
         lastAddress = record.address;
       } else if (lastAddress) {
+        // In grouped sheets the address column doubles as the Source column on
+        // buyer rows ("Dipo Genuis", "Facebook", …) — keep it before carrying.
+        if (!record.source && record.address) record.source = record.address;
         record.address = lastAddress;
         record.carried = true;
       }

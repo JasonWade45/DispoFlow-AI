@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 import type { Task } from "@/types";
-import { cancelTask, markSent, updateTask } from "@/lib/actions";
+import { cancelTask, logInteraction, markSent, updateTask } from "@/lib/actions";
 import { cx, formatDate, formatTime } from "@/lib/format";
 import { buyerById, propertyById, sortTasksByPriority, taskStatus, userById } from "@/lib/selectors";
 import { useDb, useSession } from "@/lib/store";
@@ -30,6 +30,21 @@ const DRAFT_PREFIX = "Follow-up draft:";
 
 function isAutoDraft(task: Task): boolean {
   return task.taskType === DRAFT_TASK_TYPE && task.description.startsWith(DRAFT_PREFIX);
+}
+
+/** Extract the quoted message from a draft task description (pre-draftMessage field). */
+function draftText(task: Task): string {
+  if (task.draftMessage) return task.draftMessage;
+  const m = task.description.match(/^Follow-up draft: "([\s\S]*?)"(?:\s—|$)/);
+  return m ? m[1] : task.description;
+}
+
+function friendlySendError(msg: string): string {
+  if (msg.includes("not authorized for this scope")) {
+    return "DispoGenius token is missing send permissions — enable Send Conversation Messages (conversations/message.write) and Create Contacts (contacts.write).";
+  }
+  if (msg.includes("401")) return "DispoGenius rejected the token. Check DISPOGENIUS_PIT_TOKEN.";
+  return msg;
 }
 
 const EMPTY_TITLES: Record<string, string> = {
@@ -64,6 +79,9 @@ function FollowUps() {
   const [reschedule, setReschedule] = useState<Task | null>(null);
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [rescheduleTime, setRescheduleTime] = useState("");
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const [sentIds, setSentIds] = useState<Set<string>>(new Set());
+  const [sendErrors, setSendErrors] = useState<Record<string, string>>({});
 
   const activeUsers = db.users.filter((u) => u.active);
 
@@ -138,6 +156,50 @@ function FollowUps() {
   function handleCancel(id: string) {
     if (!window.confirm("Cancel this follow-up?")) return;
     cancelTask(id, "Cancelled by user");
+  }
+
+  async function sendDraft(task: Task) {
+    const buyer = buyerById(db, task.buyerId);
+    if (!buyer || !buyer.phone || sendingId) return;
+    const message = draftText(task);
+    setSendingId(task.id);
+    setSendErrors((m) => ({ ...m, [task.id]: "" }));
+    try {
+      const res = await fetch("/api/dispo-genius/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: buyer.phone,
+          name: buyer.fullName,
+          email: buyer.email,
+          message,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) throw new Error(data?.error ?? `Send failed (${res.status})`);
+      const now = new Date().toISOString();
+      logInteraction({
+        buyerId: buyer.id,
+        propertyId: task.propertyId,
+        eventType: "Outgoing SMS",
+        occurredAt: now,
+        recordedAt: now,
+        originalContent: message,
+        enhanced: null,
+        useEnhanced: false,
+        userId: session.userId ?? "u_owner",
+        outcome: "Sent via DispoGenius",
+      });
+      markSent(task.id, "Sent via DispoGenius from Follow-Ups", session.userId ?? "u_owner");
+      setSentIds((s) => new Set(s).add(task.id));
+    } catch (e) {
+      setSendErrors((m) => ({
+        ...m,
+        [task.id]: friendlySendError(e instanceof Error ? e.message : "Send failed"),
+      }));
+    } finally {
+      setSendingId(null);
+    }
   }
 
   const tabLabels = TABS.map((t) => (counts[t] > 0 ? `${t} (${counts[t]})` : t));
@@ -234,15 +296,40 @@ function FollowUps() {
                     <span className="text-xs text-slate-400">{task.taskType}</span>
                     {task.completedVia === "sent" && <Badge label="Sent" />}
                   </div>
-                  <p className="mt-1 text-sm text-slate-800">
-                    {propertyHref ? (
-                      <Link href={propertyHref} className="hover:text-slate-950 hover:underline">
-                        {task.description}
-                      </Link>
-                    ) : (
-                      task.description
-                    )}
-                  </p>
+                  {draft ? (
+                    <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 p-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-600">
+                        To:{" "}
+                        <span className="font-medium normal-case text-slate-800">
+                          {buyer?.fullName ?? "Unknown buyer"}
+                        </span>
+                        {buyer?.phone && (
+                          <span className="ml-1 font-normal text-slate-500">({buyer.phone})</span>
+                        )}
+                        {property && (
+                          <>
+                            {" · about "}
+                            <span className="font-medium normal-case text-slate-800">
+                              {property.address}
+                            </span>
+                          </>
+                        )}
+                      </p>
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-800">
+                        {draftText(task)}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-sm text-slate-800">
+                      {propertyHref ? (
+                        <Link href={propertyHref} className="hover:text-slate-950 hover:underline">
+                          {task.description}
+                        </Link>
+                      ) : (
+                        task.description
+                      )}
+                    </p>
+                  )}
                   <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-400">
                     {buyer ? (
                       <Link
@@ -270,23 +357,45 @@ function FollowUps() {
                     {task.sentAt && <span>Sent {formatDate(task.sentAt.slice(0, 10))}</span>}
                     <span>{assigneeName}</span>
                   </p>
+                  {sendErrors[task.id] && (
+                    <p className="mt-1 text-xs text-rose-600">{sendErrors[task.id]}</p>
+                  )}
                   {done && task.completionNotes && (
                     <p className="mt-1 text-xs text-slate-400">Note: {task.completionNotes}</p>
                   )}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                   {draft ? (
-                    <Button
-                      size="sm"
-                      onClick={() =>
-                        modals.generateFollowUp({
-                          buyerId: task.buyerId,
-                          propertyId: task.propertyId,
-                        })
-                      }
-                    >
-                      Review &amp; Send
-                    </Button>
+                    <>
+                      <Button
+                        size="sm"
+                        onClick={() => sendDraft(task)}
+                        disabled={!buyer?.phone || sendingId === task.id || sentIds.has(task.id)}
+                        title={
+                          buyer?.phone
+                            ? "Send this message via DispoGenius SMS"
+                            : "This buyer has no phone number"
+                        }
+                      >
+                        {sendingId === task.id
+                          ? "Sending…"
+                          : sentIds.has(task.id)
+                            ? "Sent ✓"
+                            : "Send SMS"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          modals.generateFollowUp({
+                            buyerId: task.buyerId,
+                            propertyId: task.propertyId,
+                          })
+                        }
+                      >
+                        Edit
+                      </Button>
+                    </>
                   ) : (
                     <Button
                       size="sm"

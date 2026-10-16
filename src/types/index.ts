@@ -85,6 +85,7 @@ export interface Buyer {
   budgetMax: number | null;
   status: BuyerStatus;
   notes: string;
+  source?: string;
   createdAt: string;
   updatedAt: string;
   createdBy: ID;
@@ -192,6 +193,7 @@ export interface Task {
   priority: Priority;
   status: Exclude<TaskStatus, "Due" | "Overdue">;
   completionNotes: string;
+  draftMessage?: string;
   createdAt: string;
   completedAt: string | null;
   completedVia: CompletionVia;

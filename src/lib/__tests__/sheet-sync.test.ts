@@ -342,6 +342,13 @@ describe("grouped sheets (address carried to buyer rows)", () => {
     expect(recs[3].carried).toBeUndefined();
   });
 
+  it("captures the Source value from the address column on carried buyer rows", () => {
+    const recs = groupedRecords();
+    expect(recs[3].source).toBe("Dipo Genuis");
+    expect(recs[4].source).toBe("Facebook");
+    expect(recs[2].source).toBe(""); // property header row has no source
+  });
+
   it("detects grouped layout from the data", () => {
     expect(detectGroupedRows(GROUP_HEADERS, groupedRows, GROUP_MAPPINGS)).toBe(true);
     const flat = [

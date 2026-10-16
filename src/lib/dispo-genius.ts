@@ -248,6 +248,7 @@ export function ensureBuyersFromConversations(
       budgetMax: null,
       status: "Active",
       notes: "Created automatically from a DispoGenius conversation.",
+      source: "DispoGenius",
       createdAt: now,
       updatedAt: now,
       createdBy: userId,

@@ -14,6 +14,7 @@ import {
   taskDueTimestamp,
 } from "@/lib/selectors";
 import { formatDate, relativeTime } from "@/lib/format";
+import { isPlaceholderName } from "@/lib/dispo-genius";
 import { useModals } from "@/components/modals/ModalHost";
 import { Badge, Button, Card, EmptyState, Input, PageHeader, Select } from "@/components/ui";
 
@@ -47,10 +48,21 @@ export default function BuyersPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
   const [propertyFilter, setPropertyFilter] = useState("All");
+  const [sourceFilter, setSourceFilter] = useState("All");
+  const [contactFilter, setContactFilter] = useState("All");
+  const [nameFilter, setNameFilter] = useState("All");
   const [sort, setSort] = useState<SortKey>("name");
 
   const query = search.trim().toLowerCase();
   const digits = query.replace(/\D/g, "");
+
+  const sourceOptions = Array.from(
+    new Set(db.buyers.map((b) => (b.source || "").trim()).filter(Boolean)),
+  ).sort((a, b) => a.localeCompare(b));
+
+  const hasPhone = (phone: string) => phone.replace(/\D/g, "").length >= 7;
+  const hasRealName = (b: (typeof db.buyers)[number]) =>
+    !isPlaceholderName(b.fullName, b.phone, b.email);
 
   const propertyOptions = Array.from(
     new Map(
@@ -71,6 +83,11 @@ export default function BuyersPage() {
         !db.relationships.some((r) => r.buyerId === b.id && r.propertyId === propertyFilter)
       )
         return false;
+      if (sourceFilter !== "All" && (b.source || "").trim() !== sourceFilter) return false;
+      if (contactFilter === "with-phone" && !hasPhone(b.phone)) return false;
+      if (contactFilter === "without-phone" && hasPhone(b.phone)) return false;
+      if (nameFilter === "with-name" && !hasRealName(b)) return false;
+      if (nameFilter === "without-name" && hasRealName(b)) return false;
       if (!query) return true;
       return (
         b.fullName.toLowerCase().includes(query) ||
@@ -134,6 +151,39 @@ export default function BuyersPage() {
               ))}
             </Select>
             <Select
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value)}
+              className="sm:w-44"
+              aria-label="Filter by source"
+            >
+              <option value="All">All sources</option>
+              {sourceOptions.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </Select>
+            <Select
+              value={contactFilter}
+              onChange={(e) => setContactFilter(e.target.value)}
+              className="sm:w-48"
+              aria-label="Filter by phone"
+            >
+              <option value="All">Phone: any</option>
+              <option value="with-phone">With phone number</option>
+              <option value="without-phone">Without phone number</option>
+            </Select>
+            <Select
+              value={nameFilter}
+              onChange={(e) => setNameFilter(e.target.value)}
+              className="sm:w-48"
+              aria-label="Filter by name"
+            >
+              <option value="All">Name: any</option>
+              <option value="with-name">With real name</option>
+              <option value="without-name">Without name (phone only)</option>
+            </Select>
+            <Select
               value={propertyFilter}
               onChange={(e) => setPropertyFilter(e.target.value)}
               className="sm:w-56"
@@ -184,6 +234,7 @@ export default function BuyersPage() {
                   <th className="hidden px-4 py-3 font-medium md:table-cell">Email</th>
                   <th className="px-4 py-3 font-medium">Preferred Markets</th>
                   <th className="px-4 py-3 font-medium">Buyer Status</th>
+                  <th className="hidden px-4 py-3 font-medium lg:table-cell">Source</th>
                   <th className="px-4 py-3 font-medium">Properties</th>
                   <th className="px-4 py-3 font-medium"># Active Offers</th>
                   <th className="px-4 py-3 font-medium">Last Contact</th>
@@ -233,6 +284,9 @@ export default function BuyersPage() {
                       </td>
                       <td className="px-4 py-3">
                         <Badge label={b.status} />
+                      </td>
+                      <td className="hidden px-4 py-3 text-slate-600 lg:table-cell">
+                        {b.source || "—"}
                       </td>
                       <td className="px-4 py-3 text-slate-700">
                         {propertyLinks.length === 0 ? (

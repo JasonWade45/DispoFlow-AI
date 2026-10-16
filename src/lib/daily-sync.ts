@@ -155,6 +155,7 @@ export async function runDailySync(
       relatedInteractionId: null,
       taskType: FOLLOW_UP_TASK_TYPE,
       description: `Follow-up draft: "${message}"${why ? ` — ${why}` : ""}`,
+      draftMessage: message,
       dueDate: now.slice(0, 10),
       dueTime: null,
       assignedUserId: userId,
