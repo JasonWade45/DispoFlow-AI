@@ -13,6 +13,7 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url)
   const code = searchParams.get('code')
+  const state = searchParams.get('state') || 'default'
 
   if (!code) {
     return NextResponse.json({ error: 'Missing authorization code' }, { status: 400 })
@@ -38,7 +39,9 @@ export async function GET(request: NextRequest) {
 
     const tokens = await tokenRes.json()
 
-    const redirectUrl = new URL('/', request.url)
+    // Return the user to the page they started from (allowlist: only local paths).
+    const targetPath = state === 'settings' ? '/settings/sheets' : '/'
+    const redirectUrl = new URL(targetPath, request.url)
     redirectUrl.searchParams.set('sheets_connected', '1')
     if (tokens.access_token) {
       redirectUrl.searchParams.set('has_token', '1')
@@ -57,7 +60,7 @@ export async function GET(request: NextRequest) {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
-        maxAge: 30 * 24 * 3600,
+        maxAge: 180 * 24 * 3600,
         path: '/',
       })
     }

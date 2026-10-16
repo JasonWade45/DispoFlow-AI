@@ -7,6 +7,7 @@ import { extractAccessLocal, formatAccess } from "@/lib/ai/access-info"
 import { autoMergeDuplicates } from "@/lib/merge"
 import { parseMoney, todayIso, uid } from "@/lib/format"
 import { OPEN_OFFER_STATUSES } from "@/lib/selectors"
+import { SHEETS_REAUTH_MESSAGE } from "@/lib/sheets-constants"
 import { normalizeAddress, parseAddressParts } from "@/lib/sync"
 import { updateDb } from "@/lib/store"
 import {
@@ -77,6 +78,8 @@ export interface SheetSyncResult extends SheetApplyStats {
   rowsRead: number
   error: string | null
   accessFilled: number
+  /** True when the Google session expired and the user must reconnect their account. */
+  reauthRequired?: boolean
 }
 
 interface AccessCandidate {
@@ -795,6 +798,15 @@ async function executeSheetSync(
     })
     const data = await res.json()
     if (!res.ok) {
+      if (
+        res.status === 401 ||
+        data.error === "not_authorized" ||
+        data.error === "reauth_required"
+      ) {
+        const err = new Error(SHEETS_REAUTH_MESSAGE) as Error & { reauthRequired?: boolean }
+        err.reauthRequired = true
+        throw err
+      }
       throw new Error(data.detail || data.error || "Failed to read worksheet")
     }
 
@@ -819,6 +831,11 @@ async function executeSheetSync(
     onProgress?.({ phase: "done", done: records.length, total: records.length })
   } catch (e) {
     result.error = e instanceof Error ? e.message : "Sheet sync failed"
+    if (typeof (e as { reauthRequired?: boolean })?.reauthRequired === "boolean") {
+      result.reauthRequired = (e as { reauthRequired?: boolean }).reauthRequired
+    } else if (result.error === SHEETS_REAUTH_MESSAGE) {
+      result.reauthRequired = true
+    }
   }
 
   finalizeSheetSync(conn, result, startedAt)

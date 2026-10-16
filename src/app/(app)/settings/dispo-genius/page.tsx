@@ -2,7 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { buildInteractionsFromDg, type DgPayload, type DgSyncSummary } from "@/lib/dispo-genius";
+import {
+  buildInteractionsFromDg,
+  ensureBuyersFromConversations,
+  type DgPayload,
+  type DgSyncSummary,
+} from "@/lib/dispo-genius";
 import { updateDb, useDb, useSession } from "@/lib/store";
 import { Badge, Button, Card, PageHeader } from "@/components/ui";
 
@@ -26,6 +31,7 @@ export default function DispoGeniusPage() {
   const [error, setError] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [result, setResult] = useState<DgSyncSummary | null>(null);
+  const [buyersCreated, setBuyersCreated] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,21 +63,29 @@ export default function DispoGeniusPage() {
     setSyncing(true);
     setError("");
     setResult(null);
+    setBuyersCreated(0);
     try {
       const res = await fetch("/api/dispo-genius/conversations");
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
       const payload = data as unknown as DgPayload;
-      const { interactions, summary } = buildInteractionsFromDg(
-        payload,
-        db,
-        session.userId ?? "u_owner",
-        new Date().toISOString(),
-      );
-      if (interactions.length > 0) {
-        updateDb((d) => ({ ...d, interactions: [...d.interactions, ...interactions] }));
+      const now = new Date().toISOString();
+      const userId = session.userId ?? "u_owner";
+      const withBuyers = ensureBuyersFromConversations(db, payload, userId, now);
+      const newBuyers = withBuyers.db.buyers.filter((b) => !db.buyers.some((x) => x.id === b.id));
+      const { interactions, summary } = buildInteractionsFromDg(payload, withBuyers.db, userId, now);
+      if (newBuyers.length > 0 || interactions.length > 0) {
+        updateDb((d) => ({
+          ...d,
+          buyers: [...d.buyers, ...newBuyers.filter((nb) => !d.buyers.some((x) => x.id === nb.id))],
+          interactions: [
+            ...d.interactions,
+            ...interactions.filter((i) => !d.interactions.some((x) => x.id === i.id)),
+          ],
+        }));
       }
       setResult(summary);
+      setBuyersCreated(newBuyers.length);
       setStatus("connected");
     } catch (e) {
       setError(friendlyError(e instanceof Error ? e.message : "Sync failed"));
@@ -151,6 +165,11 @@ export default function DispoGeniusPage() {
                 <strong>{result.conversations}</strong> conversation{result.conversations === 1 ? "" : "s"} ·
                 matched <strong>{result.matched}</strong> to buyers · {result.unmatched} unmatched ·{" "}
                 {result.skipped} already imported
+                {buyersCreated > 0 && (
+                  <>
+                    {" "}· created <strong>{buyersCreated}</strong> new buyer{buyersCreated === 1 ? "" : "s"}
+                  </>
+                )}
               </div>
             )}
           </div>

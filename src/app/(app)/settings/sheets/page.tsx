@@ -16,6 +16,7 @@ import {
   runSheetSync,
   type SheetSyncProgress,
 } from "@/lib/sheet-sync";
+import { SHEETS_REAUTH_MESSAGE } from "@/lib/sheets-constants";
 import {
   Badge,
   Button,
@@ -60,6 +61,13 @@ export default function GoogleSheetsPage() {
 
   const connection = db.sheetConnections[0];
   const showPicker = authorized || Boolean(connection?.isConnected);
+  const [needsReauth, setNeedsReauth] = useState(false);
+
+  const connectionNeedsReauth =
+    needsReauth ||
+    connection?.lastSyncError === SHEETS_REAUTH_MESSAGE ||
+    connection?.lastSyncError === "not_authorized" ||
+    connection?.lastSyncError === "reauth_required";
 
   function buildInspectRange(
     title: string,
@@ -79,8 +87,9 @@ export default function GoogleSheetsPage() {
       if (!res.ok) {
         if (data.error === "not_configured") {
           setError("Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your environment.");
-        } else if (data.error === "not_authorized") {
+        } else if (data.error === "not_authorized" || data.error === "reauth_required") {
           setAuthorized(false);
+          setNeedsReauth(true);
         } else {
           setError(data.message || data.error || "Failed to load spreadsheets");
         }
@@ -88,6 +97,7 @@ export default function GoogleSheetsPage() {
       }
       setSpreadsheets(data.spreadsheets ?? []);
       setAuthorized(true);
+      setNeedsReauth(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error");
     } finally {
@@ -346,8 +356,10 @@ export default function GoogleSheetsPage() {
       }));
       const result = await runSheetSync(conn, setSyncProgress);
       if (result.error) {
+        if (result.reauthRequired) setNeedsReauth(true);
         setError(result.error);
       } else {
+        setNeedsReauth(false);
         setImportResult(formatSheetSyncSummary(result));
       }
       setPreviewOpen(false);
@@ -408,7 +420,11 @@ export default function GoogleSheetsPage() {
         title="Google Sheets Integration"
         subtitle="Connect a Google Sheet to import and sync property data"
         actions={
-          showPicker ? (
+          connectionNeedsReauth ? (
+            <Button onClick={handleConnect} disabled={connecting}>
+              {connecting ? "Connecting…" : "Reconnect Google Account"}
+            </Button>
+          ) : showPicker ? (
             <Button variant="secondary" onClick={() => void fetchSpreadsheets()}>
               Refresh
             </Button>
@@ -692,7 +708,18 @@ export default function GoogleSheetsPage() {
                   </p>
                 </div>
               </div>
-              {connection.lastSyncError && (
+              {connectionNeedsReauth && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-amber-100 bg-amber-50 px-4 py-3">
+                  <p className="text-sm text-amber-800">
+                    Your Google session expired, so syncing is paused. Reconnect to resume automatic
+                    sync.
+                  </p>
+                  <Button size="sm" onClick={handleConnect} disabled={connecting}>
+                    {connecting ? "Connecting…" : "Reconnect Google Account"}
+                  </Button>
+                </div>
+              )}
+              {connection.lastSyncError && !connectionNeedsReauth && (
                 <p className="border-t border-rose-100 px-4 py-3 text-sm text-rose-700">
                   {connection.lastSyncError}
                 </p>

@@ -1,5 +1,9 @@
 import type { DB, Interaction, Task } from "@/types";
-import { buildInteractionsFromDg, type DgPayload } from "@/lib/dispo-genius";
+import {
+  buildInteractionsFromDg,
+  ensureBuyersFromConversations,
+  type DgPayload,
+} from "@/lib/dispo-genius";
 import { generateFollowUp, blockedFollowUpReason, type FollowUpContext } from "@/lib/ai/followup";
 import { groqGenerateFollowUp, isGroqConfigured } from "@/lib/ai/groq";
 import { uid } from "@/lib/format";
@@ -27,6 +31,7 @@ export interface DailySyncResult {
   conversations: number;
   draftsCreated: number;
   draftsSkipped: number;
+  buyersCreated: number;
 }
 
 /**
@@ -44,9 +49,10 @@ export async function runDailySync(
   const maxDrafts = opts.maxDrafts ?? 20;
   const useAi = opts.useAi ?? isGroqConfigured();
 
-  const { interactions, summary } = buildInteractionsFromDg(payload, db, userId, now);
-  const mergedInteractions: Interaction[] = [...db.interactions, ...interactions];
-  const draftDb: DB = { ...db, interactions: mergedInteractions };
+  const withBuyers = ensureBuyersFromConversations(db, payload, userId, now);
+  const { interactions, summary } = buildInteractionsFromDg(payload, withBuyers.db, userId, now);
+  const mergedInteractions: Interaction[] = [...withBuyers.db.interactions, ...interactions];
+  const draftDb: DB = { ...withBuyers.db, interactions: mergedInteractions };
 
   // Buyers referenced by the newly imported interactions that have a relationship (property context).
   const candidateBuyerIds = new Set<string>();
@@ -55,7 +61,7 @@ export async function runDailySync(
   }
 
   const existingOpenDraftBuyers = new Set(
-    db.tasks
+    withBuyers.db.tasks
       .filter(
         (t) =>
           t.taskType === FOLLOW_UP_TASK_TYPE &&
@@ -78,7 +84,7 @@ export async function runDailySync(
     }
     if (!needsFollowUp(draftDb, buyerId)) continue;
 
-    const buyer = db.buyers.find((b) => b.id === buyerId);
+    const buyer = withBuyers.db.buyers.find((b) => b.id === buyerId);
     if (!buyer) continue;
     // Pick the first relationship for property context.
     const relationship = db.relationships.find((r) => r.buyerId === buyerId);
@@ -166,10 +172,16 @@ export async function runDailySync(
       conversations: summary.conversations,
       draftsCreated,
       draftsSkipped,
+      buyersCreated: withBuyers.created,
     },
   };
 }
 
 export function formatDailySyncSummary(r: DailySyncResult): string {
-  return `${r.imported} new message${r.imported === 1 ? "" : "s"} · ${r.draftsCreated} follow-up draft${r.draftsCreated === 1 ? "" : "s"}`;
+  const parts = [
+    `${r.imported} new message${r.imported === 1 ? "" : "s"}`,
+    `${r.draftsCreated} follow-up draft${r.draftsCreated === 1 ? "" : "s"}`,
+  ];
+  if (r.buyersCreated > 0) parts.push(`${r.buyersCreated} new buyer${r.buyersCreated === 1 ? "" : "s"}`);
+  return parts.join(" · ");
 }

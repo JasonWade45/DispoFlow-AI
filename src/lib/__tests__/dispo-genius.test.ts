@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildInteractionsFromDg,
   dgDirection,
+  ensureBuyersFromConversations,
   findBuyerForConversation,
   mapDgEventType,
   validateDgSend,
@@ -283,5 +284,73 @@ describe("validateDgSend", () => {
     const result = validateDgSend({ phone: "5551234567", message: "x".repeat(1601) });
     expect(result.ok).toBe(false);
     if (result.ok === false) expect(result.error).toContain("too long");
+  });
+});
+
+describe("ensureBuyersFromConversations", () => {
+  const NOW = "2026-10-16T12:00:00.000Z";
+
+  it("creates a buyer for an unmatched conversation", () => {
+    const db = makeDb([], []);
+    const p = payload([conv({ id: "c_9", phone: "+15559998888", name: "Bob Ray", email: "bob@example.com" })]);
+    const result = ensureBuyersFromConversations(db, p, "u_owner", NOW);
+    expect(result.created).toBe(1);
+    expect(result.db.buyers).toHaveLength(1);
+    expect(result.db.buyers[0].fullName).toBe("Bob Ray");
+    expect(result.db.buyers[0].phone).toBe("+15559998888");
+    expect(result.db.buyers[0].status).toBe("Active");
+  });
+
+  it("does not create a buyer when phone already matches", () => {
+    const db = makeDb([buyer({ phone: "(555) 123-4567" })], []);
+    const p = payload([conv({ phone: "+15551234567" })]);
+    const result = ensureBuyersFromConversations(db, p, "u_owner", NOW);
+    expect(result.created).toBe(0);
+    expect(result.db.buyers).toHaveLength(1);
+  });
+
+  it("does not create a buyer when email matches", () => {
+    const db = makeDb([buyer({ phone: "" })], []);
+    const p = payload([conv({ phone: "", email: "jane@example.com" })]);
+    const result = ensureBuyersFromConversations(db, p, "u_owner", NOW);
+    expect(result.created).toBe(0);
+  });
+
+  it("does not create a buyer when name matches", () => {
+    const db = makeDb([buyer({ phone: "", email: "" })], []);
+    const p = payload([conv({ phone: "", email: "", name: "Jane Roe" })]);
+    const result = ensureBuyersFromConversations(db, p, "u_owner", NOW);
+    expect(result.created).toBe(0);
+  });
+
+  it("skips conversations with no identity at all", () => {
+    const db = makeDb([], []);
+    const p = payload([conv({ phone: "", email: "", name: "" })]);
+    const result = ensureBuyersFromConversations(db, p, "u_owner", NOW);
+    expect(result.created).toBe(0);
+  });
+
+  it("creates only one buyer for two conversations with the same phone", () => {
+    const db = makeDb([], []);
+    const p = payload([
+      conv({ id: "c_1", phone: "+15551234567", name: "Jane Roe" }),
+      conv({ id: "c_2", phone: "+15551234567", name: "Jane Roe" }),
+    ]);
+    const result = ensureBuyersFromConversations(db, p, "u_owner", NOW);
+    expect(result.created).toBe(1);
+  });
+
+  it("does not mutate the input db", () => {
+    const db = makeDb([], []);
+    const p = payload([conv({ phone: "+15559998888", name: "Bob Ray" })]);
+    ensureBuyersFromConversations(db, p, "u_owner", NOW);
+    expect(db.buyers).toHaveLength(0);
+  });
+
+  it("uses the phone as a fallback display name when there is no name", () => {
+    const db = makeDb([], []);
+    const p = payload([conv({ phone: "+15559998888", name: "", email: "" })]);
+    const result = ensureBuyersFromConversations(db, p, "u_owner", NOW);
+    expect(result.db.buyers[0].fullName).toBe("+15559998888");
   });
 });

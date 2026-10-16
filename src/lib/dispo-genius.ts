@@ -1,4 +1,5 @@
 import type { Buyer, DB, Direction, Interaction, InteractionType } from "@/types";
+import { uid } from "@/lib/format";
 
 export interface DgMessage {
   id: string;
@@ -169,6 +170,57 @@ export function buildInteractionsFromDg(
 
   interactions.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
   return { interactions, summary };
+}
+
+export interface DgBuyerCreationResult {
+  db: DB;
+  created: number;
+}
+
+/**
+ * Creates Buyer records for conversations that don't match any existing buyer
+ * (matched by phone, then email, then name — same order as the interaction
+ * import), so every conversation lands on a real buyer profile instead of
+ * staying unmatched. Pure: returns a new DB without mutating the input.
+ */
+export function ensureBuyersFromConversations(
+  db: DB,
+  payload: DgPayload,
+  userId: string,
+  now: string,
+): DgBuyerCreationResult {
+  const buyers: Buyer[] = [...db.buyers];
+  let created = 0;
+
+  for (const conv of payload.conversations) {
+    if (findBuyerForConversation(buyers, conv)) continue;
+    const phone = (conv.phone || "").trim();
+    const email = (conv.email || "").trim();
+    const name = (conv.name || "").trim();
+    if (!phone && !email && !name) continue;
+
+    buyers.push({
+      id: uid("b"),
+      orgId: db.organization.id,
+      fullName: name || phone || email,
+      companyName: "",
+      phone,
+      email,
+      preferredContactMethod: "SMS",
+      preferredMarkets: [],
+      propertyTypes: [],
+      budgetMin: null,
+      budgetMax: null,
+      status: "Active",
+      notes: "Created automatically from a DispoGenius conversation.",
+      createdAt: now,
+      updatedAt: now,
+      createdBy: userId,
+    });
+    created += 1;
+  }
+
+  return { db: created > 0 ? { ...db, buyers } : db, created };
 }
 
 export interface DgSendInput {

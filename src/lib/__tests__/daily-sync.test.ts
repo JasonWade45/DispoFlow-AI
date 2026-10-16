@@ -333,7 +333,56 @@ describe("runDailySync", () => {
 
 describe("formatDailySyncSummary", () => {
   it("formats with correct pluralization", () => {
-    expect(formatDailySyncSummary({ imported: 1, draftsCreated: 1, skipped: 0, matched: 0, unmatched: 0, conversations: 1, draftsSkipped: 0 })).toBe("1 new message · 1 follow-up draft");
-    expect(formatDailySyncSummary({ imported: 5, draftsCreated: 2, skipped: 0, matched: 0, unmatched: 0, conversations: 5, draftsSkipped: 0 })).toBe("5 new messages · 2 follow-up drafts");
+    expect(
+      formatDailySyncSummary({
+        imported: 1,
+        draftsCreated: 1,
+        buyersCreated: 0,
+        skipped: 0,
+        matched: 0,
+        unmatched: 0,
+        conversations: 1,
+        draftsSkipped: 0,
+      }),
+    ).toBe("1 new message · 1 follow-up draft");
+    expect(
+      formatDailySyncSummary({
+        imported: 5,
+        draftsCreated: 2,
+        buyersCreated: 3,
+        skipped: 0,
+        matched: 0,
+        unmatched: 0,
+        conversations: 5,
+        draftsSkipped: 0,
+      }),
+    ).toBe("5 new messages · 2 follow-up drafts · 3 new buyers");
+  });
+});
+
+describe("runDailySync buyer creation", () => {
+  it("creates buyers for unmatched conversations and links their interactions", async () => {
+    const db = makeDb();
+    db.buyers = []; // no buyers at all — like the live system
+    const p = payload([
+      conv("c_1", "ct_1", "+15551234567", [
+        msg("m_1", "c_1", "interested in the property", "inbound"),
+      ]),
+    ]);
+    const { db: nextDb, result } = await runDailySync(db, p, "u_owner", NOW, { useAi: false });
+    expect(result.buyersCreated).toBe(1);
+    expect(result.matched).toBe(1);
+    expect(nextDb.buyers).toHaveLength(1);
+    expect(nextDb.buyers[0].phone).toBe("+15551234567");
+    expect(nextDb.interactions[0].buyerId).toBe(nextDb.buyers[0].id);
+  });
+
+  it("does not create a buyer when one already matches by phone", async () => {
+    const db = makeDb();
+    const p = payload([
+      conv("c_1", "ct_1", "+15551234567", [msg("m_1", "c_1", "hi", "inbound")]),
+    ]);
+    const { result } = await runDailySync(db, p, "u_owner", NOW, { useAi: false });
+    expect(result.buyersCreated).toBe(0);
   });
 });

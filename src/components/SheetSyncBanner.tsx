@@ -27,6 +27,7 @@ export default function SheetSyncBanner() {
   const [message, setMessage] = useState("");
   const [progress, setProgress] = useState<SheetSyncProgress | null>(null);
   const [isError, setIsError] = useState(false);
+  const [needsReauth, setNeedsReauth] = useState(false);
   const running = useRef(false);
 
   const getConn = useCallback(() => getDb().sheetConnections[0], []);
@@ -43,8 +44,10 @@ export default function SheetSyncBanner() {
       if (result.error) {
         setIsError(true);
         setMessage(result.error);
+        setNeedsReauth(Boolean(result.reauthRequired));
       } else {
         setMessage(formatSheetSyncSummary(result));
+        setNeedsReauth(false);
       }
     } catch (e) {
       setIsError(true);
@@ -106,7 +109,9 @@ export default function SheetSyncBanner() {
       className={
         "mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm " +
         (isError
-          ? "border-rose-200 bg-rose-50 text-rose-800"
+          ? needsReauth
+            ? "border-amber-200 bg-amber-50 text-amber-900"
+            : "border-rose-200 bg-rose-50 text-rose-800"
           : "border-emerald-200 bg-emerald-50 text-emerald-800")
       }
     >
@@ -133,6 +138,16 @@ export default function SheetSyncBanner() {
         </span>
       </div>
       <div className="flex items-center gap-2">
+        {!syncing && needsReauth && (
+          <button
+            onClick={() => {
+              window.location.href = "/settings/sheets";
+            }}
+            className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-50"
+          >
+            Reconnect Google
+          </button>
+        )}
         {!syncing && (
           <button
             onClick={() => void runSync()}
