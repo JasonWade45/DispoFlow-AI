@@ -33,6 +33,7 @@ export interface DgSyncSummary {
   skipped: number;
   matched: number;
   unmatched: number;
+  relinked?: number;
 }
 
 export interface DgBuildResult {
@@ -98,6 +99,40 @@ function validIsoDate(raw: string): string | null {
   return d.toISOString();
 }
 
+/**
+ * Links a conversation message to a property: a buyer linked to exactly one
+ * property gets every message attributed to it; buyers with several links get
+ * a message only when its body mentions one of their property addresses.
+ */
+export function inferPropertyForBuyer(
+  db: DB,
+  buyerId: string | null,
+  body: string,
+  cache?: Map<string, { propertyId: string; address: string }[]>,
+): string | null {
+  if (!buyerId) return null;
+  if (!cache) {
+    cache = new Map();
+  }
+  let links = cache.get(buyerId);
+  if (!links) {
+    const properties = db.properties ?? [];
+    links = (db.relationships ?? [])
+      .filter((r) => r.buyerId === buyerId)
+      .map((r) => ({
+        propertyId: r.propertyId,
+        address: properties.find((p) => p.id === r.propertyId)?.address ?? "",
+      }))
+      .filter((l) => Boolean(l.address));
+    cache.set(buyerId, links);
+  }
+  if (links.length === 0) return null;
+  if (links.length === 1) return links[0].propertyId;
+  const low = (body || "").toLowerCase();
+  const hit = links.find((l) => low.includes(l.address.toLowerCase()));
+  return hit ? hit.propertyId : null;
+}
+
 export function buildInteractionsFromDg(
   payload: DgPayload,
   db: DB,
@@ -113,13 +148,13 @@ export function buildInteractionsFromDg(
     matched: 0,
     unmatched: 0,
   };
+  const propCache = new Map<string, { propertyId: string; address: string }[]>();
 
   for (const conv of payload.conversations) {
     summary.conversations += 1;
     const buyer = findBuyerForConversation(db.buyers, conv);
     if (buyer) summary.matched += 1;
     else summary.unmatched += 1;
-
     for (const msg of conv.messages) {
       const id = `i_dg_${msg.id}`;
       if (existing.has(id)) {
@@ -146,7 +181,7 @@ export function buildInteractionsFromDg(
         id,
         orgId: db.organization.id,
         buyerId: buyer ? buyer.id : null,
-        propertyId: null,
+        propertyId: inferPropertyForBuyer(db, buyer ? buyer.id : null, body, propCache),
         eventType,
         direction,
         occurredAt: validIsoDate(msg.dateAdded) ?? now,
@@ -221,6 +256,43 @@ export function ensureBuyersFromConversations(
   }
 
   return { db: created > 0 ? { ...db, buyers } : db, created };
+}
+
+export interface DgRelinkResult {
+  interactions: Interaction[];
+  relinked: number;
+}
+
+/**
+ * Re-attributes already-imported messages (i_dg_*) that were logged before a
+ * matching buyer or a property link existed — e.g. the first import ran while
+ * the buyer list was still empty. Returns patched copies of the changed
+ * interactions; callers merge them back by id.
+ */
+export function relinkDgInteractions(db: DB, payload: DgPayload): DgRelinkResult {
+  const convByMsgId = new Map<string, DgConversation>();
+  for (const conv of payload.conversations) {
+    for (const m of conv.messages) convByMsgId.set(m.id, conv);
+  }
+  const propCache = new Map<string, { propertyId: string; address: string }[]>();
+  const out: Interaction[] = [];
+
+  for (const i of db.interactions) {
+    if (!i.id.startsWith("i_dg_")) continue;
+    if (i.buyerId && i.propertyId) continue;
+    const conv = convByMsgId.get(i.id.slice("i_dg_".length));
+    if (!conv) continue;
+    const buyer =
+      (i.buyerId ? db.buyers.find((b) => b.id === i.buyerId) : undefined) ??
+      findBuyerForConversation(db.buyers, conv);
+    if (!buyer) continue;
+    const propertyId =
+      i.propertyId ?? inferPropertyForBuyer(db, buyer.id, i.originalContent, propCache);
+    if (buyer.id === i.buyerId && propertyId === i.propertyId) continue;
+    out.push({ ...i, buyerId: buyer.id, propertyId });
+  }
+
+  return { interactions: out, relinked: out.length };
 }
 
 export interface DgSendInput {

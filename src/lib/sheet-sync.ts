@@ -13,6 +13,7 @@ import { updateDb } from "@/lib/store"
 import {
   buildRecords,
   columnLetterToIndex,
+  detectGroupedRows,
   indexToColumnLetter,
   type SheetRecord,
 } from "@/lib/sheet-mapping"
@@ -402,12 +403,12 @@ export function applySheetRecordsImpl(
       }
 
       const notes = cell(record, "notes", mapped)
-      if (notes && notes !== existing.notes) {
+      if (!record.carried && notes && notes !== existing.notes) {
         patch.notes = notes
         changed = true
       }
 
-      if (existing.sourceRowId !== String(record._row)) {
+      if (!record.carried && existing.sourceRowId !== String(record._row)) {
         patch.sourceRowId = String(record._row)
         changed = true
       }
@@ -477,11 +478,11 @@ export function applySheetRecordsImpl(
           stats.buyersTouched += 1
         }
         buyerId = found.id
-      } else if (name) {
+      } else if (name || phone || email) {
         const created: Buyer = {
           id: uid("b_"),
           orgId,
-          fullName: name,
+          fullName: name || phone || email,
           companyName: "",
           phone,
           email,
@@ -573,7 +574,7 @@ export function applySheetRecordsImpl(
           buyerId,
           propertyId: property.id,
           interestStatus: interestStatus || "New",
-          interestNotes: "",
+          interestNotes: record.carried ? record.notes?.trim() || "" : "",
           firstContactDate: todayIso(),
           lastInteractionDate: null,
           nextFollowUpDate: nf,
@@ -607,6 +608,9 @@ export function applySheetRecordsImpl(
         const patch: Partial<BuyerProperty> = {}
         if (interestStatus && interestStatus !== rel.interestStatus) {
           patch.interestStatus = interestStatus
+        }
+        if (record.carried && record.notes && record.notes !== rel.interestNotes) {
+          patch.interestNotes = record.notes
         }
         if (lc && lc !== rel.lastContactedAt) patch.lastContactedAt = lc
         if (lm && lm !== rel.lastMessageSentAt) patch.lastMessageSentAt = lm
@@ -743,6 +747,18 @@ export function applySheetRecords(
   return stats
 }
 
+export function buildSyncRecords(
+  headers: string[],
+  rows: string[][],
+  conn: SheetConnection,
+): SheetRecord[] {
+  const carryAddress =
+    typeof conn.groupedRows === "boolean"
+      ? conn.groupedRows
+      : detectGroupedRows(headers, rows, conn.columnMappings)
+  return buildRecords(headers, rows, conn.columnMappings, 2, { carryAddress })
+}
+
 let inFlight: Promise<SheetSyncResult> | null = null
 
 export function runSheetSync(
@@ -810,7 +826,7 @@ async function executeSheetSync(
       throw new Error(data.detail || data.error || "Failed to read worksheet")
     }
 
-    const records = buildRecords(data.headers ?? [], data.rows ?? [], conn.columnMappings)
+    const records = buildSyncRecords(data.headers ?? [], data.rows ?? [], conn)
     result.rowsRead = records.length
 
     onProgress?.({ phase: "applying", done: 0, total: records.length })

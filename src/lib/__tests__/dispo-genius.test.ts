@@ -4,7 +4,9 @@ import {
   dgDirection,
   ensureBuyersFromConversations,
   findBuyerForConversation,
+  inferPropertyForBuyer,
   mapDgEventType,
+  relinkDgInteractions,
   validateDgSend,
   type DgConversation,
   type DgPayload,
@@ -234,6 +236,165 @@ describe("buildInteractionsFromDg", () => {
     expect(interactions).toHaveLength(1);
     expect(summary.imported).toBe(1);
     expect(summary.skipped).toBe(1);
+  });
+});
+
+function interaction(overrides: Partial<Interaction> = {}): Interaction {
+  return {
+    id: "i_dg_m1",
+    orgId: "org_1",
+    buyerId: null,
+    propertyId: null,
+    eventType: "Incoming SMS",
+    direction: "in",
+    occurredAt: "2026-10-15T12:00:00.000Z",
+    recordedAt: "2026-10-15T12:00:00.000Z",
+    originalContent: "hello",
+    enhancedNotes: "",
+    outcome: "",
+    potentialOfferAmount: null,
+    potentialOfferConfirmed: false,
+    nextAction: "",
+    missingInfo: [],
+    isAiSuggestion: false,
+    createdBy: "u_owner",
+    createdAt: "2026-10-15T12:00:00.000Z",
+    updatedAt: "2026-10-15T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("inferPropertyForBuyer", () => {
+  const base = {
+    buyers: [buyer()],
+    relationships: [{ id: "r_1", buyerId: "b_1", propertyId: "p_1" }],
+    properties: [{ id: "p_1", address: "123 Main St" }],
+  } as unknown as DB;
+
+  it("assigns the buyer's only linked property", () => {
+    expect(inferPropertyForBuyer(base, "b_1", "anything at all")).toBe("p_1");
+  });
+
+  it("returns null without a buyer or any relationship", () => {
+    expect(inferPropertyForBuyer(base, null, "hello")).toBeNull();
+    expect(inferPropertyForBuyer(base, "b_missing", "hello")).toBeNull();
+    const noRel = { buyers: [buyer()], relationships: [], properties: [] } as unknown as DB;
+    expect(inferPropertyForBuyer(noRel, "b_1", "hello")).toBeNull();
+  });
+
+  it("with several links matches only when the body mentions the address", () => {
+    const multi = {
+      buyers: [buyer()],
+      relationships: [
+        { id: "r_1", buyerId: "b_1", propertyId: "p_1" },
+        { id: "r_2", buyerId: "b_1", propertyId: "p_2" },
+      ],
+      properties: [
+        { id: "p_1", address: "123 Main St" },
+        { id: "p_2", address: "456 Oak Ave" },
+      ],
+    } as unknown as DB;
+    expect(inferPropertyForBuyer(multi, "b_1", "Is 456 OAK AVE still available?")).toBe("p_2");
+    expect(inferPropertyForBuyer(multi, "b_1", "just checking in")).toBeNull();
+  });
+});
+
+describe("buildInteractionsFromDg property attribution", () => {
+  const now = "2026-10-15T12:00:00.000Z";
+
+  it("links messages to the buyer's only related property", () => {
+    const b = buyer();
+    const db = {
+      ...makeDb([b]),
+      relationships: [{ id: "r_1", buyerId: b.id, propertyId: "p_1" }],
+      properties: [{ id: "p_1", address: "123 Main St" }],
+    } as unknown as DB;
+    const p = payload([
+      conv({
+        messages: [
+          { id: "m1", conversationId: "c_1", body: "hi", direction: "inbound", messageType: "TYPE_SMS", dateAdded: now },
+        ],
+      }),
+    ]);
+
+    const { interactions } = buildInteractionsFromDg(p, db, "u_owner", now);
+    expect(interactions[0].buyerId).toBe(b.id);
+    expect(interactions[0].propertyId).toBe("p_1");
+  });
+
+  it("keeps propertyId null when the buyer has no relationships", () => {
+    const b = buyer();
+    const p = payload([
+      conv({
+        messages: [
+          { id: "m1", conversationId: "c_1", body: "hi", direction: "inbound", messageType: "TYPE_SMS", dateAdded: now },
+        ],
+      }),
+    ]);
+
+    const { interactions } = buildInteractionsFromDg(p, makeDb([b]), "u_owner", now);
+    expect(interactions[0].propertyId).toBeNull();
+  });
+});
+
+describe("relinkDgInteractions", () => {
+  const now = "2026-10-15T12:00:00.000Z";
+
+  function linkedDb(orphan: Interaction): DB {
+    return {
+      buyers: [buyer()],
+      interactions: [orphan],
+      relationships: [{ id: "r_1", buyerId: "b_1", propertyId: "p_1" }],
+      properties: [{ id: "p_1", address: "123 Main St" }],
+    } as unknown as DB;
+  }
+
+  function payloadFor(msgId: string): DgPayload {
+    return payload([
+      conv({
+        messages: [
+          { id: msgId, conversationId: "c_1", body: "hey", direction: "inbound", messageType: "TYPE_SMS", dateAdded: now },
+        ],
+      }),
+    ]);
+  }
+
+  it("attaches orphaned imported messages to the matching buyer and property", () => {
+    const orphan = interaction();
+    const db = linkedDb(orphan);
+    const r = relinkDgInteractions(db, payloadFor("m1"));
+
+    expect(r.relinked).toBe(1);
+    expect(r.interactions[0].buyerId).toBe("b_1");
+    expect(r.interactions[0].propertyId).toBe("p_1");
+    expect(r.interactions[0].id).toBe("i_dg_m1");
+    expect(db.interactions[0].buyerId).toBeNull(); // input not mutated
+  });
+
+  it("leaves fully linked and non-DG interactions untouched", () => {
+    const done = interaction({ buyerId: "b_1", propertyId: "p_1" });
+    const other = interaction({ id: "i_manual_1" });
+    const db = linkedDb(done);
+    db.interactions = [done, other];
+
+    const r = relinkDgInteractions(db, payloadFor("m1"));
+    expect(r.relinked).toBe(0);
+    expect(r.interactions).toHaveLength(0);
+  });
+
+  it("skips messages that are no longer in the payload", () => {
+    const orphan = interaction({ id: "i_dg_m99" });
+    const r = relinkDgInteractions(linkedDb(orphan), payloadFor("m1"));
+    expect(r.relinked).toBe(0);
+  });
+
+  it("falls back to the conversation match when the old buyer id is gone", () => {
+    const orphan = interaction({ buyerId: "b_gone" });
+    const db = linkedDb(orphan);
+    const r = relinkDgInteractions(db, payloadFor("m1"));
+    // old buyer id no longer exists → falls back to the conversation match
+    expect(r.relinked).toBe(1);
+    expect(r.interactions[0].buyerId).toBe("b_1");
   });
 });
 

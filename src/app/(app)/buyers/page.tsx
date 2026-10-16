@@ -9,6 +9,7 @@ import {
   interactionsForBuyer,
   isOpenOffer,
   offersForBuyer,
+  propertyById,
   relationshipsForBuyer,
   taskDueTimestamp,
 } from "@/lib/selectors";
@@ -45,14 +46,31 @@ export default function BuyersPage() {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
+  const [propertyFilter, setPropertyFilter] = useState("All");
   const [sort, setSort] = useState<SortKey>("name");
 
   const query = search.trim().toLowerCase();
   const digits = query.replace(/\D/g, "");
 
+  const propertyOptions = Array.from(
+    new Map(
+      db.relationships
+        .map((r) => {
+          const p = propertyById(db, r.propertyId);
+          return p ? ([r.propertyId, p.address] as const) : null;
+        })
+        .filter((x): x is readonly [string, string] => x !== null),
+    ).entries(),
+  ).sort((a, b) => a[1].localeCompare(b[1]));
+
   const filtered = db.buyers
     .filter((b) => {
       if (status !== "All" && b.status !== status) return false;
+      if (
+        propertyFilter !== "All" &&
+        !db.relationships.some((r) => r.buyerId === b.id && r.propertyId === propertyFilter)
+      )
+        return false;
       if (!query) return true;
       return (
         b.fullName.toLowerCase().includes(query) ||
@@ -102,19 +120,32 @@ export default function BuyersPage() {
             placeholder="Search name, phone, email, or company"
             className="sm:flex-1"
           />
-          <Select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="sm:w-48"
-            aria-label="Filter by status"
-          >
-            <option value="All">All</option>
-            {db.settings.buyerStatuses.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </Select>
+            <Select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              className="sm:w-48"
+              aria-label="Filter by status"
+            >
+              <option value="All">All</option>
+              {db.settings.buyerStatuses.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </Select>
+            <Select
+              value={propertyFilter}
+              onChange={(e) => setPropertyFilter(e.target.value)}
+              className="sm:w-56"
+              aria-label="Filter by property"
+            >
+              <option value="All">All properties</option>
+              {propertyOptions.map(([pid, address]) => (
+                <option key={pid} value={pid}>
+                  {address}
+                </option>
+              ))}
+            </Select>
           <Select
             value={sort}
             onChange={(e) => setSort(e.target.value as SortKey)}
@@ -153,7 +184,7 @@ export default function BuyersPage() {
                   <th className="hidden px-4 py-3 font-medium md:table-cell">Email</th>
                   <th className="px-4 py-3 font-medium">Preferred Markets</th>
                   <th className="px-4 py-3 font-medium">Buyer Status</th>
-                  <th className="px-4 py-3 font-medium"># Interested Properties</th>
+                  <th className="px-4 py-3 font-medium">Properties</th>
                   <th className="px-4 py-3 font-medium"># Active Offers</th>
                   <th className="px-4 py-3 font-medium">Last Contact</th>
                   <th className="px-4 py-3 font-medium">Next Follow-Up</th>
@@ -161,9 +192,15 @@ export default function BuyersPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filtered.map((b) => {
-                  const interested = relationshipsForBuyer(db, b.id).filter(
+                  const rels = relationshipsForBuyer(db, b.id).filter(
                     (r) => r.relationshipStatus === "Active",
-                  ).length;
+                  );
+                  const propertyLinks = rels
+                    .map((r) => ({
+                      id: r.propertyId,
+                      address: propertyById(db, r.propertyId)?.address ?? "",
+                    }))
+                    .filter((x) => x.address);
                   const openOffers = offersForBuyer(db, b.id).filter(isOpenOffer).length;
                   const lastContact = lastContactIso(db, b.id);
                   const due = nextFollowUpDue(db, b.id);
@@ -197,7 +234,29 @@ export default function BuyersPage() {
                       <td className="px-4 py-3">
                         <Badge label={b.status} />
                       </td>
-                      <td className="px-4 py-3 text-slate-700">{interested}</td>
+                      <td className="px-4 py-3 text-slate-700">
+                        {propertyLinks.length === 0 ? (
+                          "—"
+                        ) : (
+                          <div className="space-y-0.5">
+                            {propertyLinks.slice(0, 2).map((x) => (
+                              <Link
+                                key={x.id}
+                                href={`/properties/${x.id}`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="block max-w-[16rem] truncate text-xs font-medium text-slate-600 hover:text-slate-900"
+                              >
+                                {x.address}
+                              </Link>
+                            ))}
+                            {propertyLinks.length > 2 && (
+                              <p className="text-xs text-slate-400">
+                                +{propertyLinks.length - 2} more
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-slate-700">{openOffers}</td>
                       <td className="px-4 py-3 text-slate-600">{relativeTime(lastContact)}</td>
                       <td className="px-4 py-3 text-slate-600">{due ? formatDate(due) : "—"}</td>

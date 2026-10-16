@@ -9,6 +9,7 @@ import {
 } from "@/lib/actions";
 import {
   applySheetRecords,
+  buildSyncRecords,
   formatSheetSyncSummary,
   isSheetSyncDue,
   parseSheetDate,
@@ -455,5 +456,86 @@ describe("formatSheetSyncSummary", () => {
     expect(formatSheetSyncSummary(base)).toContain("12 rows checked");
     expect(formatSheetSyncSummary({ ...base, created: 2, updated: 3 })).toContain("+2 new");
     expect(formatSheetSyncSummary({ ...base, error: "boom" })).toContain("boom");
+  });
+});
+
+describe("buildSyncRecords (grouped rows carried during sync)", () => {
+  const GROUP_HEADERS = ["Status", "Source / Address", "Name", "Phone"];
+  const GROUP_MAPPINGS: ColumnMapping[] = [
+    { logicalField: "address", columnLetter: "B", headerName: "Source / Address", source: "sheet" },
+    { logicalField: "interestStatus", columnLetter: "A", headerName: "Status", source: "sheet" },
+    { logicalField: "buyerName", columnLetter: "C", headerName: "Name", source: "sheet" },
+    { logicalField: "buyerPhone", columnLetter: "D", headerName: "Phone", source: "sheet" },
+  ];
+  const groupedRows: string[][] = [
+    ["", "1110 Buckhurst Dr, Atlanta, GA 30349", "", ""],
+    ["Interested", "Dipo Genuis", "Ben Winwood", "555-0100"],
+    ["Undecided", "Facebook", "Jane Roe", "555-0200"],
+  ];
+
+  function conn(groupedRowsFlag?: boolean): SheetConnection {
+    return {
+      id: "sc_1",
+      orgId: "o",
+      spreadsheetId: "s1",
+      spreadsheetName: "Sheet",
+      worksheetName: "Leads",
+      isConnected: true,
+      lastSyncAt: null,
+      lastSyncStatus: "synced",
+      lastSyncError: null,
+      columnMappings: GROUP_MAPPINGS,
+      groupedRows: groupedRowsFlag,
+      createdAt: "",
+      updatedAt: "",
+    };
+  }
+
+  it("carries addresses to buyer rows when groupedRows is saved true", () => {
+    const recs = buildSyncRecords(GROUP_HEADERS, groupedRows, conn(true));
+    expect(recs[1].address).toBe("1110 Buckhurst Dr, Atlanta, GA 30349");
+    expect(recs[1].carried).toBe(true);
+    expect(recs[1].buyerName).toBe("Ben Winwood");
+    expect(recs[2].carried).toBe(true);
+  });
+
+  it("falls back to detecting the grouped layout when groupedRows is not saved", () => {
+    const recs = buildSyncRecords(GROUP_HEADERS, groupedRows, conn(undefined));
+    expect(recs[1].address).toBe("1110 Buckhurst Dr, Atlanta, GA 30349");
+    expect(recs[1].carried).toBe(true);
+  });
+
+  it("keeps buyer rows uncarried when groupedRows is explicitly false", () => {
+    const recs = buildSyncRecords(GROUP_HEADERS, groupedRows, conn(false));
+    expect(recs[1].carried).toBeUndefined();
+    expect(recs[1].address).toBe("Dipo Genuis");
+  });
+
+  it("creates buyers and relationships through the sync path without polluting property fields", () => {
+    reset();
+    const recs = buildSyncRecords(GROUP_HEADERS, groupedRows, conn(true));
+    const stats = applySheetRecords(recs, GROUP_MAPPINGS, "u_owner");
+
+    expect(stats.created).toBe(1);
+    const db = getDb();
+    expect(db.properties).toHaveLength(1);
+    expect(db.properties[0].sourceRowId).toBe("2");
+    expect(db.properties[0].notes).toBe("");
+    expect(db.buyers).toHaveLength(2);
+    expect(db.relationships).toHaveLength(2);
+    expect(db.relationships.every((r) => r.propertyId === db.properties[0].id)).toBe(true);
+  });
+
+  it("does not duplicate buyers or clobber the property row id on resync", () => {
+    reset();
+    const recs = buildSyncRecords(GROUP_HEADERS, groupedRows, conn(true));
+    applySheetRecords(recs, GROUP_MAPPINGS, "u_owner");
+    const second = applySheetRecords(recs, GROUP_MAPPINGS, "u_owner");
+
+    expect(second.created).toBe(0);
+    const db = getDb();
+    expect(db.buyers).toHaveLength(2);
+    expect(db.relationships).toHaveLength(2);
+    expect(db.properties[0].sourceRowId).toBe("2");
   });
 });

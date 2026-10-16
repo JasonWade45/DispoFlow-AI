@@ -2,6 +2,7 @@ import type { DB, Interaction, Task } from "@/types";
 import {
   buildInteractionsFromDg,
   ensureBuyersFromConversations,
+  relinkDgInteractions,
   type DgPayload,
 } from "@/lib/dispo-genius";
 import { generateFollowUp, blockedFollowUpReason, type FollowUpContext } from "@/lib/ai/followup";
@@ -32,6 +33,7 @@ export interface DailySyncResult {
   draftsCreated: number;
   draftsSkipped: number;
   buyersCreated: number;
+  relinked: number;
 }
 
 /**
@@ -51,12 +53,20 @@ export async function runDailySync(
 
   const withBuyers = ensureBuyersFromConversations(db, payload, userId, now);
   const { interactions, summary } = buildInteractionsFromDg(payload, withBuyers.db, userId, now);
-  const mergedInteractions: Interaction[] = [...withBuyers.db.interactions, ...interactions];
+  const relink = relinkDgInteractions(withBuyers.db, payload);
+  const relinkedById = new Map(relink.interactions.map((i) => [i.id, i]));
+  const mergedInteractions: Interaction[] = [
+    ...withBuyers.db.interactions.map((i) => relinkedById.get(i.id) ?? i),
+    ...interactions,
+  ];
   const draftDb: DB = { ...withBuyers.db, interactions: mergedInteractions };
 
-  // Buyers referenced by the newly imported interactions that have a relationship (property context).
+  // Buyers referenced by the newly imported or relinked interactions that have a relationship (property context).
   const candidateBuyerIds = new Set<string>();
   for (const i of interactions) {
+    if (i.buyerId) candidateBuyerIds.add(i.buyerId);
+  }
+  for (const i of relink.interactions) {
     if (i.buyerId) candidateBuyerIds.add(i.buyerId);
   }
 
@@ -173,6 +183,7 @@ export async function runDailySync(
       draftsCreated,
       draftsSkipped,
       buyersCreated: withBuyers.created,
+      relinked: relink.relinked,
     },
   };
 }
@@ -183,5 +194,6 @@ export function formatDailySyncSummary(r: DailySyncResult): string {
     `${r.draftsCreated} follow-up draft${r.draftsCreated === 1 ? "" : "s"}`,
   ];
   if (r.buyersCreated > 0) parts.push(`${r.buyersCreated} new buyer${r.buyersCreated === 1 ? "" : "s"}`);
+  if (r.relinked > 0) parts.push(`${r.relinked} old message${r.relinked === 1 ? "" : "s"} relinked`);
   return parts.join(" · ");
 }

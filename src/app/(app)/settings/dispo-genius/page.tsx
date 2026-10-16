@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import {
   buildInteractionsFromDg,
   ensureBuyersFromConversations,
+  relinkDgInteractions,
   type DgPayload,
   type DgSyncSummary,
 } from "@/lib/dispo-genius";
@@ -74,17 +75,19 @@ export default function DispoGeniusPage() {
       const withBuyers = ensureBuyersFromConversations(db, payload, userId, now);
       const newBuyers = withBuyers.db.buyers.filter((b) => !db.buyers.some((x) => x.id === b.id));
       const { interactions, summary } = buildInteractionsFromDg(payload, withBuyers.db, userId, now);
-      if (newBuyers.length > 0 || interactions.length > 0) {
+      const relink = relinkDgInteractions(withBuyers.db, payload);
+      const relinkedById = new Map(relink.interactions.map((i) => [i.id, i]));
+      if (newBuyers.length > 0 || interactions.length > 0 || relink.interactions.length > 0) {
         updateDb((d) => ({
           ...d,
           buyers: [...d.buyers, ...newBuyers.filter((nb) => !d.buyers.some((x) => x.id === nb.id))],
           interactions: [
-            ...d.interactions,
+            ...d.interactions.map((i) => relinkedById.get(i.id) ?? i),
             ...interactions.filter((i) => !d.interactions.some((x) => x.id === i.id)),
           ],
         }));
       }
-      setResult(summary);
+      setResult({ ...summary, relinked: relink.relinked });
       setBuyersCreated(newBuyers.length);
       setStatus("connected");
     } catch (e) {
@@ -168,6 +171,12 @@ export default function DispoGeniusPage() {
                 {buyersCreated > 0 && (
                   <>
                     {" "}· created <strong>{buyersCreated}</strong> new buyer{buyersCreated === 1 ? "" : "s"}
+                  </>
+                )}
+                {(result.relinked ?? 0) > 0 && (
+                  <>
+                    {" "}· relinked <strong>{result.relinked}</strong> old message
+                    {result.relinked === 1 ? "" : "s"} to buyers/properties
                   </>
                 )}
               </div>
