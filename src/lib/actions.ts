@@ -647,7 +647,7 @@ export function purgeSheetImport(): {
     const relationships = db.relationships.filter((r) => !sheetPropertyIds.has(r.propertyId))
     counts.relationships = db.relationships.length - relationships.length
 
-    const tasks = db.tasks.filter((t) => !sheetPropertyIds.has(t.propertyId))
+    const tasks = db.tasks.filter((t) => !(t.propertyId && sheetPropertyIds.has(t.propertyId)))
     counts.tasks = db.tasks.length - tasks.length
 
     const offers = db.offers.filter((o) => !sheetPropertyIds.has(o.propertyId))

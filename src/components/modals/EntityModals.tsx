@@ -91,10 +91,10 @@ export function AddPropertyModal({
     if (!preview) return;
     setForm(f => ({
       ...f,
-      address: preview.address,
-      city: preview.city,
-      state: preview.state,
-      zip: preview.zip,
+      address: preview.address ?? f.address,
+      city: preview.city ?? f.city,
+      state: preview.state ?? f.state,
+      zip: preview.zip ?? f.zip,
       accessType: preview.accessType ?? f.accessType,
       askingPrice: preview.askingPrice?.toString() || "",
       arv: preview.arv?.toString() || "",
@@ -218,13 +218,13 @@ export function AddPropertyModal({
                 <span className="font-medium">ARV: ${preview.arv?.toLocaleString() ?? '—'}</span>
               </div>
               <div>
-                <span className="font-medium">Images: {preview.images.length}</span>
+                <span className="font-medium">Images: {preview.images?.length ?? 0}</span>
               </div>
               <div>
-                <span className="font-medium">Comps: {preview.comps.length}</span>
+                <span className="font-medium">Comps: {preview.comps?.length ?? 0}</span>
               </div>
               <div>
-                <span className="font-medium">Specs: {Object.entries(preview.specs).filter(([,v]) => v).length} fields</span>
+                <span className="font-medium">Specs: {Object.entries(preview.specs ?? {}).filter(([,v]) => v).length} fields</span>
               </div>
             </div>
             {preview.financingNote && (
