@@ -1,6 +1,7 @@
 import type { ColumnMapping } from "@/types";
 import { LOGICAL_FIELDS, indexToColumnLetter, columnLetterToIndex } from "@/lib/sheet-mapping";
 import { callGroq, isGroqConfigured } from "@/lib/ai/groq";
+import { columnMapResponseSchema } from "@/lib/schemas";
 
 export interface AiColumnMapResult {
   mapping: Record<string, number>;
@@ -112,10 +113,10 @@ export function parseAiColumnMapping(
   } catch {
     return null;
   }
-  const root = obj as { mapping?: unknown; notes?: unknown };
-  if (typeof root.mapping !== "object" || root.mapping === null) return null;
+  const envelope = columnMapResponseSchema.safeParse(obj);
+  if (!envelope.success) return null;
 
-  const raw = root.mapping as Record<string, unknown>;
+  const raw = envelope.data.mapping;
   const mapping: Record<string, number> = {};
   const used = new Map<number, string>();
 
@@ -150,7 +151,7 @@ export function parseAiColumnMapping(
 
   return {
     mapping,
-    notes: typeof root.notes === "string" ? root.notes.trim() : "",
+    notes: typeof envelope.data.notes === "string" ? envelope.data.notes.trim() : "",
     addressValid,
   };
 }

@@ -1,5 +1,6 @@
 import type { Buyer, Interaction, Offer, Property } from "@/types";
 import { formatMoney, isFirst, relativeTime } from "@/lib/format";
+import { followUpDraftResponseSchema, groqChatResponseSchema } from "@/lib/schemas";
 import {
   blockedFollowUpReason,
   generateFollowUp,
@@ -161,8 +162,8 @@ export async function callGroq(system: string, user: string, temperature: number
         lastError = new Error(`Groq ${res.status} (${model}): ${body.slice(0, 200)}`);
         continue;
       }
-      const data = await res.json();
-      const content = data?.choices?.[0]?.message?.content;
+      const response = groqChatResponseSchema.safeParse(await res.json());
+      const content = response.success ? response.data.choices?.[0]?.message.content : undefined;
       if (typeof content !== "string" || content.length === 0) {
         lastError = new Error(`Groq returned empty content (${model})`);
         continue;
@@ -176,15 +177,21 @@ export async function callGroq(system: string, user: string, temperature: number
 }
 
 function parseDraft(content: string): { message: string; why: string } {
+  const fallbackWhy = "AI-drafted from the conversation history.";
+  let raw: unknown;
   try {
-    const parsed = JSON.parse(content) as { message?: string; why?: string };
-    return {
-      message: (parsed.message ?? "").trim(),
-      why: (parsed.why ?? "").trim() || "AI-drafted from the conversation history.",
-    };
+    raw = JSON.parse(content);
   } catch {
-    return { message: content.trim(), why: "AI-drafted from the conversation history." };
+    return { message: content.trim(), why: fallbackWhy };
   }
+  const parsed = followUpDraftResponseSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { message: "", why: fallbackWhy };
+  }
+  return {
+    message: parsed.data.message.trim(),
+    why: parsed.data.why?.trim() || fallbackWhy,
+  };
 }
 
 function buildSources(ctx: FollowUpContext): string[] {

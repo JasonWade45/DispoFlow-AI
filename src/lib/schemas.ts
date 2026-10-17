@@ -60,3 +60,33 @@ export const statePutSchema = z.object({
     { error: "Missing db payload" },
   ),
 });
+
+export const groqChatResponseSchema = z.object({
+  choices: z.array(z.object({ message: z.object({ content: z.string() }) })).optional(),
+});
+
+export const followUpDraftResponseSchema = z.object({
+  message: z.string(),
+  why: z.string().optional(),
+});
+
+export const columnMapResponseSchema = z.object({
+  mapping: z.record(z.string(), z.unknown()),
+  notes: z.unknown().optional(),
+});
+
+const accessField = z
+  .unknown()
+  .optional()
+  .transform((v): string | null => (typeof v === "string" ? v : null));
+
+export const accessExtractionItemSchema = z.object({
+  id: z.string(),
+  code: accessField,
+  appointment: accessField,
+});
+
+export const accessExtractionResponseSchema = z.union([
+  z.array(z.unknown()),
+  z.object({ results: z.array(z.unknown()) }).transform((v) => v.results),
+]);

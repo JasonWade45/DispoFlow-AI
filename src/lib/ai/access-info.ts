@@ -1,4 +1,5 @@
 import { callGroq, isGroqConfigured } from "@/lib/ai/groq"
+import { accessExtractionItemSchema, accessExtractionResponseSchema } from "@/lib/schemas"
 
 export interface AccessExtraction {
   code: string | null
@@ -58,32 +59,29 @@ export function parseAccessExtraction(
   knownIds: Set<string>,
 ): AccessCandidateResult[] {
   if (!raw || !raw.trim()) return []
-  let parsed: unknown
+  let json: unknown
   try {
     const cleaned = raw
       .replace(/^\s*```(?:json)?/i, "")
       .replace(/```\s*$/i, "")
       .trim()
-    parsed = JSON.parse(cleaned)
+    json = JSON.parse(cleaned)
   } catch {
     return []
   }
-  const arr = Array.isArray(parsed)
-    ? parsed
-    : ((parsed as { results?: unknown } | null)?.results ?? null)
-  if (!Array.isArray(arr)) return []
+  const list = accessExtractionResponseSchema.safeParse(json)
+  if (!list.success) return []
   const out: AccessCandidateResult[] = []
-  for (const item of arr) {
-    if (typeof item !== "object" || item === null) continue
-    const r = item as Record<string, unknown>
-    const id = typeof r.id === "string" ? r.id : null
+  for (const rawItem of list.data) {
+    const item = accessExtractionItemSchema.safeParse(rawItem)
+    if (!item.success) continue
+    const { id, code, appointment } = item.data
     if (!id || !knownIds.has(id)) continue
-    const code = typeof r.code === "string" && r.code.trim() ? r.code.trim().slice(0, 12) : null
-    const appointment =
-      typeof r.appointment === "string" && r.appointment.trim()
-        ? r.appointment.trim().slice(0, 120)
-        : null
-    out.push({ id, code, appointment })
+    out.push({
+      id,
+      code: code && code.trim() ? code.trim().slice(0, 12) : null,
+      appointment: appointment && appointment.trim() ? appointment.trim().slice(0, 120) : null,
+    })
   }
   return out
 }
