@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { AccessInfoEntry, DB, Property, BuyerProperty, Task, Session, User } from '@/types'
+import { cloudStateResponseSchema, storedSessionSchema } from '@/lib/schemas'
 import { createSeed } from './seed-work'
 import { uid } from './format'
 
@@ -22,11 +23,6 @@ let localSavedAt = ''
 let cloudChecked = false
 let suppressCloudSave = false
 let cloudSaveTimer: ReturnType<typeof setTimeout> | null = null
-
-interface StoredSession {
-  userId: string | null
-  user?: User | null
-}
 
 function migrateV1toV2(parsed: Partial<DB> & Record<string, unknown>): DB {
   const base = createSeed()
@@ -119,7 +115,7 @@ export function cleanupAccessInfo() {
       // Also add to access_infoTable if not already there
       const existing = db.access_infoTable.find((a) => a.propertyId === p.id)
       if (!existing) {
-        ;(db.access_infoTable as any).push({
+        db.access_infoTable.push({
           id: uid(`ai_${p.id}`),
           orgId: p.orgId,
           propertyId: p.id,
@@ -156,9 +152,9 @@ function hydrate(): void {
     localSavedAt = window.localStorage.getItem(SAVED_AT_KEY) || ''
     const rawSession = window.localStorage.getItem(SESSION_KEY)
     if (rawSession) {
-      const parsed: StoredSession = JSON.parse(rawSession)
-      if (parsed && typeof parsed.userId === 'string') {
-        session = { userId: parsed.userId, user: parsed.user || null }
+      const parsed = storedSessionSchema.safeParse(JSON.parse(rawSession))
+      if (parsed.success) {
+        session = { userId: parsed.data.userId, user: parsed.data.user ?? null }
       }
     }
   } catch {
@@ -182,12 +178,9 @@ async function syncFromCloud(): Promise<void> {
   try {
     const res = await fetch('/api/state')
     if (!res.ok) return
-    const data = (await res.json()) as {
-      configured?: boolean
-      found?: boolean
-      db?: Record<string, unknown>
-      updatedAt?: string
-    }
+    const parsed = cloudStateResponseSchema.safeParse(await res.json())
+    if (!parsed.success) return
+    const data = parsed.data
     if (!data.configured || !data.found || !data.db) return
     const cloudAt = data.updatedAt || ''
     // Only adopt the cloud copy when it is strictly newer than what we last

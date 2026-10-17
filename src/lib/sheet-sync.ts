@@ -10,6 +10,7 @@ import { OPEN_OFFER_STATUSES } from "@/lib/selectors"
 import { SHEETS_REAUTH_MESSAGE } from "@/lib/sheets-constants"
 import { normalizeAddress, parseAddressParts } from "@/lib/sync"
 import { updateDb } from "@/lib/store"
+import { storedSessionSchema } from "@/lib/schemas"
 import {
   buildRecords,
   columnLetterToIndex,
@@ -43,7 +44,7 @@ export const PROPERTY_STATUS_VALUES = [
 ] as const
 
 export function normalizePropertyStatus(raw: string): string | null {
-  if (PROPERTY_STATUS_VALUES.includes(raw as any)) return raw
+  if (PROPERTY_STATUS_VALUES.some((v) => v === raw)) return raw
   return null
 }
 
@@ -104,8 +105,8 @@ function resolveUserId(): string {
   try {
     const raw = window.localStorage.getItem("dispoflow_session_v2")
     if (raw) {
-      const parsed = JSON.parse(raw) as { userId?: string | null }
-      if (parsed?.userId) return parsed.userId
+      const parsed = storedSessionSchema.safeParse(JSON.parse(raw))
+      if (parsed.success && parsed.data.userId) return parsed.data.userId
     }
   } catch {
     // fall through

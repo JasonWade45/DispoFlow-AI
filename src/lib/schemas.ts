@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Buyer, DB, Interaction, Offer, Property, Task } from "@/types";
+import type { Buyer, DB, Interaction, Offer, Property, Task, User } from "@/types";
 import { FOLLOW_UP_MODES, REFINE_ACTIONS } from "@/lib/ai/followup";
 import type { FollowUpMode } from "@/lib/ai/followup";
 
@@ -171,3 +171,17 @@ export const trelloCardSchema = z.object({
 });
 
 export const trelloCardsResponseSchema = z.array(trelloCardSchema);
+
+export const storedSessionSchema = z.object({
+  userId: z.string(),
+  user: z
+    .custom<User | null>((v) => v === null || isObject(v))
+    .optional(),
+});
+
+export const cloudStateResponseSchema = z.object({
+  configured: z.boolean().optional(),
+  found: z.boolean().optional(),
+  db: z.record(z.string(), z.unknown()).optional(),
+  updatedAt: z.string().optional(),
+});
