@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { withSheetsAuth } from '@/lib/server/sheets-auth'
+import { driveFilesResponseSchema } from '@/lib/schemas'
 
 export async function GET(request: NextRequest) {
   return withSheetsAuth(request, async (token) => {
@@ -12,8 +13,15 @@ export async function GET(request: NextRequest) {
         const err = await res.text()
         return NextResponse.json({ error: 'drive_list_failed', detail: err }, { status: 500 })
       }
-      const data = await res.json()
-      return NextResponse.json({ spreadsheets: data.files ?? [] })
+      const raw: unknown = await res.json()
+      const parsed = driveFilesResponseSchema.safeParse(raw)
+      if (!parsed.success) {
+        return NextResponse.json(
+          { error: 'drive_list_failed', detail: 'Unexpected response from Google Drive' },
+          { status: 500 },
+        )
+      }
+      return NextResponse.json({ spreadsheets: parsed.data.files ?? [] })
     } catch (e) {
       return NextResponse.json(
         { error: e instanceof Error ? e.message : 'failed' },

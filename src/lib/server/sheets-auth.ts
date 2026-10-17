@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { SHEETS_REAUTH_MESSAGE } from "@/lib/sheets-constants";
+import { googleTokenResponseSchema } from "@/lib/schemas";
 
 export { SHEETS_REAUTH_MESSAGE };
 
@@ -81,8 +82,23 @@ export async function withSheetsAuth(
     );
   }
 
-  const data = (await res.json()) as { access_token?: string; expires_in?: number; refresh_token?: string };
-  const token = data.access_token;
+  let raw: unknown;
+  try {
+    raw = await res.json();
+  } catch {
+    return NextResponse.json(
+      { error: "refresh_failed", message: "Google returned an unreadable token response" },
+      { status: 503 },
+    );
+  }
+  const parsed = googleTokenResponseSchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "refresh_failed", message: "Google returned an invalid token response" },
+      { status: 503 },
+    );
+  }
+  const token = parsed.data.access_token;
   if (!token) {
     return NextResponse.json(
       { error: "refresh_failed", message: "Google returned no access token" },
@@ -91,9 +107,13 @@ export async function withSheetsAuth(
   }
 
   const response = await handler(token);
-  response.cookies.set("gs_access_token", token, cookieOptions(data.expires_in ?? 3600));
-  if (data.refresh_token) {
-    response.cookies.set("gs_refresh_token", data.refresh_token, cookieOptions(REFRESH_COOKIE_MAX_AGE));
+  response.cookies.set("gs_access_token", token, cookieOptions(parsed.data.expires_in ?? 3600));
+  if (parsed.data.refresh_token) {
+    response.cookies.set(
+      "gs_refresh_token",
+      parsed.data.refresh_token,
+      cookieOptions(REFRESH_COOKIE_MAX_AGE),
+    );
   }
   return response;
 }

@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { withSheetsAuth } from '@/lib/server/sheets-auth'
+import { sheetsValuesResponseSchema } from '@/lib/schemas'
 
 export async function POST(request: NextRequest) {
   let body: { spreadsheetId?: string; range?: string }
@@ -23,8 +24,15 @@ export async function POST(request: NextRequest) {
         const err = await res.text()
         return NextResponse.json({ error: 'read_failed', detail: err }, { status: 500 })
       }
-      const data = await res.json()
-      const values = data.values ?? []
+      const raw: unknown = await res.json()
+      const parsed = sheetsValuesResponseSchema.safeParse(raw)
+      if (!parsed.success) {
+        return NextResponse.json(
+          { error: 'read_failed', detail: 'Unexpected response from Google Sheets' },
+          { status: 500 },
+        )
+      }
+      const values = parsed.data.values ?? []
       const headers = values[0] ?? []
       const rows = values.slice(1)
       return NextResponse.json({ headers, rows, totalRows: rows.length })

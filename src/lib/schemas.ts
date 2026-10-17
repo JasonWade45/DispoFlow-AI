@@ -90,3 +90,39 @@ export const accessExtractionResponseSchema = z.union([
   z.array(z.unknown()),
   z.object({ results: z.array(z.unknown()) }).transform((v) => v.results),
 ]);
+
+export const googleTokenResponseSchema = z.object({
+  access_token: z.string().optional(),
+  expires_in: z.number().optional().catch(undefined),
+  refresh_token: z.string().optional().catch(undefined),
+});
+
+export const sheetsValuesResponseSchema = z.object({
+  values: z.array(z.array(z.string())).nullable().optional(),
+});
+
+export const driveFilesResponseSchema = z.object({
+  files: z.array(z.unknown()).nullable().optional(),
+});
+
+export const sheetsMetaResponseSchema = z.object({
+  sheets: z
+    .array(
+      z.object({
+        properties: z
+          .object({
+            sheetId: z.number().optional(),
+            title: z.string().optional(),
+            gridProperties: z
+              .object({
+                rowCount: z.number().optional(),
+                columnCount: z.number().optional(),
+              })
+              .optional(),
+          })
+          .optional(),
+      }),
+    )
+    .nullable()
+    .optional(),
+});

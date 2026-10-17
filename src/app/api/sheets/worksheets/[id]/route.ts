@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { withSheetsAuth } from '@/lib/server/sheets-auth'
+import { sheetsMetaResponseSchema } from '@/lib/schemas'
 
 export async function GET(
   request: NextRequest,
@@ -16,15 +17,20 @@ export async function GET(
         const err = await res.text()
         return NextResponse.json({ error: 'sheets_meta_failed', detail: err }, { status: 500 })
       }
-      const data = await res.json()
-      const worksheets = (data.sheets ?? []).map(
-        (s: { properties?: { sheetId?: number; title?: string; gridProperties?: { rowCount?: number; columnCount?: number } } }) => ({
-          sheetId: s.properties?.sheetId,
-          title: s.properties?.title,
-          rowCount: s.properties?.gridProperties?.rowCount,
-          columnCount: s.properties?.gridProperties?.columnCount,
-        }),
-      )
+      const raw: unknown = await res.json()
+      const parsed = sheetsMetaResponseSchema.safeParse(raw)
+      if (!parsed.success) {
+        return NextResponse.json(
+          { error: 'sheets_meta_failed', detail: 'Unexpected response from Google Sheets' },
+          { status: 500 },
+        )
+      }
+      const worksheets = (parsed.data.sheets ?? []).map((s) => ({
+        sheetId: s.properties?.sheetId,
+        title: s.properties?.title,
+        rowCount: s.properties?.gridProperties?.rowCount,
+        columnCount: s.properties?.gridProperties?.columnCount,
+      }))
       return NextResponse.json({ worksheets })
     } catch (e) {
       return NextResponse.json(

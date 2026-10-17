@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { googleTokenResponseSchema } from '@/lib/schemas'
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET
@@ -37,7 +38,21 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Token exchange failed', detail: err }, { status: 500 })
     }
 
-    const tokens = await tokenRes.json()
+    const raw: unknown = await tokenRes.json()
+    const parsed = googleTokenResponseSchema.safeParse(raw)
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: 'Token exchange failed', detail: 'Google returned an invalid token response' },
+        { status: 500 },
+      )
+    }
+    const tokens = parsed.data
+    if (!tokens.access_token) {
+      return NextResponse.json(
+        { error: 'Token exchange failed', detail: 'Google returned an invalid token response' },
+        { status: 500 },
+      )
+    }
 
     // Return the user to the page they started from (allowlist: only local paths).
     const targetPath = state === 'settings' ? '/settings/sheets' : '/'
