@@ -1,35 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Buyer, Interaction, Offer, Property, Task } from "@/types";
 import { groqGenerateFollowUp, isGroqConfigured } from "@/lib/ai/groq";
-import type { FollowUpContext, FollowUpMode, RefineAction } from "@/lib/ai/followup";
+import type { FollowUpContext } from "@/lib/ai/followup";
+import { firstIssue, followUpRequestSchema } from "@/lib/schemas";
 
 export const maxDuration = 30;
-
-interface FollowUpRequestBody {
-  buyer: Buyer;
-  property: Property;
-  interactions: Interaction[];
-  offers: Offer[];
-  tasks?: Task[];
-  mode: FollowUpMode;
-  variant?: number;
-  refine?: RefineAction | null;
-  currentMessage?: string | null;
-}
-
-function isValidContext(body: unknown): body is FollowUpRequestBody {
-  if (typeof body !== "object" || body === null) return false;
-  const b = body as Record<string, unknown>;
-  return (
-    typeof b.buyer === "object" &&
-    b.buyer !== null &&
-    typeof b.property === "object" &&
-    b.property !== null &&
-    Array.isArray(b.interactions) &&
-    Array.isArray(b.offers) &&
-    typeof b.mode === "string"
-  );
-}
 
 export async function POST(request: NextRequest) {
   if (!isGroqConfigured()) {
@@ -46,27 +20,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (!isValidContext(body)) {
-    return NextResponse.json(
-      { error: "Missing required fields: buyer, property, interactions (array), offers (array), mode" },
-      { status: 400 },
-    );
+  const parsed = followUpRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstIssue(parsed.error) }, { status: 400 });
   }
 
   const ctx: FollowUpContext = {
-    buyer: body.buyer,
-    property: body.property,
-    interactions: body.interactions,
-    offers: body.offers,
-    tasks: body.tasks ?? [],
-    mode: body.mode,
-    variant: typeof body.variant === "number" ? body.variant : 0,
+    buyer: parsed.data.buyer,
+    property: parsed.data.property,
+    interactions: parsed.data.interactions,
+    offers: parsed.data.offers,
+    tasks: parsed.data.tasks ?? [],
+    mode: parsed.data.mode,
+    variant: parsed.data.variant ?? 0,
   };
 
   try {
     const draft = await groqGenerateFollowUp(ctx, {
-      refine: body.refine ?? null,
-      currentMessage: body.currentMessage ?? null,
+      refine: parsed.data.refine ?? null,
+      currentMessage: parsed.data.currentMessage ?? null,
     });
     return NextResponse.json(draft);
   } catch (error) {

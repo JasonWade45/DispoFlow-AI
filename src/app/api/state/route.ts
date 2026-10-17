@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isCloudConfigured, loadCloudState, saveCloudState } from "@/lib/cloud-state";
+import { statePutSchema } from "@/lib/schemas";
 
 export const maxDuration = 30;
 
@@ -24,11 +25,11 @@ export async function PUT(request: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const db = (body as { db?: unknown } | null)?.db;
-  if (!db || typeof db !== "object" || !Array.isArray((db as { properties?: unknown[] }).properties)) {
+  const parsed = statePutSchema.safeParse(body);
+  if (!parsed.success) {
     return NextResponse.json({ error: "Missing db payload" }, { status: 400 });
   }
-  const ok = await saveCloudState(db as never);
+  const ok = await saveCloudState(parsed.data.db);
   if (!ok) {
     return NextResponse.json({ error: "Failed to save to Supabase" }, { status: 502 });
   }

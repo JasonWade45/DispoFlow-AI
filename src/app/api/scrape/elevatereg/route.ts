@@ -1,22 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { scrapeElevateRegProperty } from '@/lib/scraper/elevatereg'
+import { elevateRegScrapeSchema, firstIssue } from '@/lib/schemas'
 
 export const maxDuration = 60
 
 export async function POST(request: NextRequest) {
-  let url = ''
+  let body: unknown
   try {
-    const body = await request.json()
-    url = body?.url ?? ''
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
 
-    if (!url || !url.includes('elevatereg.com/property/')) {
-      return NextResponse.json(
-        { error: 'Invalid ElevateReg property URL' },
-        { status: 400 },
-      )
-    }
+  const parsed = elevateRegScrapeSchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstIssue(parsed.error) }, { status: 400 })
+  }
 
-    const property = await scrapeElevateRegProperty(url)
+  try {
+    const property = await scrapeElevateRegProperty(parsed.data.url)
 
     return NextResponse.json({
       success: true,

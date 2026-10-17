@@ -24,6 +24,8 @@ export const FOLLOW_UP_MODES: FollowUpMode[] = [
 
 export type RefineAction = "shorter" | "direct" | "conversational" | "price" | "another";
 
+export const REFINE_ACTIONS = ["shorter", "direct", "conversational", "price", "another"] as const satisfies readonly RefineAction[];
+
 export interface FollowUpContext {
   buyer: Buyer;
   property: Property;

@@ -1,24 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { groqExtractAccessInfo } from "@/lib/ai/access-info";
+import { accessInfoRequestSchema, firstIssue } from "@/lib/schemas";
 
 export const maxDuration = 30;
-
-interface AccessInfoBody {
-  items: Array<{ id: string; text: string }>;
-}
-
-function isValidBody(body: unknown): body is AccessInfoBody {
-  if (typeof body !== "object" || body === null) return false;
-  const b = body as Record<string, unknown>;
-  if (!Array.isArray(b.items) || b.items.length === 0 || b.items.length > 40) return false;
-  return b.items.every(
-    (it) =>
-      typeof it === "object" &&
-      it !== null &&
-      typeof (it as Record<string, unknown>).id === "string" &&
-      typeof (it as Record<string, unknown>).text === "string",
-  );
-}
 
 export async function POST(request: NextRequest) {
   let body: unknown;
@@ -28,15 +12,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (!isValidBody(body)) {
-    return NextResponse.json(
-      { error: "Missing or invalid field: items (Array<{ id: string; text: string }>, 1-40 entries)" },
-      { status: 400 },
-    );
+  const parsed = accessInfoRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstIssue(parsed.error) }, { status: 400 });
   }
 
   try {
-    const results = await groqExtractAccessInfo(body.items);
+    const results = await groqExtractAccessInfo(parsed.data.items);
     return NextResponse.json({ results });
   } catch (error) {
     console.error("Groq access-info extraction error:", error);
