@@ -1,5 +1,6 @@
 import type { Buyer, DB, Direction, Interaction, InteractionType } from "@/types";
 import { uid } from "@/lib/format";
+import type { Result } from "@/lib/result";
 
 export interface DgMessage {
   id: string;
@@ -374,9 +375,7 @@ export interface DgSendInput {
   message: string;
 }
 
-export function validateDgSend(
-  raw: unknown,
-): { ok: true; value: DgSendInput } | { ok: false; error: string } {
+export function validateDgSend(raw: unknown): Result<DgSendInput> {
   if (typeof raw !== "object" || raw === null) return { ok: false, error: "Invalid JSON body" };
   const b = raw as Record<string, unknown>;
   const phone = typeof b.phone === "string" ? b.phone.trim() : "";
@@ -390,5 +389,5 @@ export function validateDgSend(
   if (normalizedDgPhone(phone).length < 10) {
     return { ok: false, error: "Missing or invalid field: phone (need a 10+ digit number)" };
   }
-  return { ok: true, value: { phone, name, email, message } };
+  return { ok: true, data: { phone, name, email, message } };
 }

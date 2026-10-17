@@ -19,10 +19,10 @@ export async function POST(request: NextRequest) {
   }
 
   const validated = validateDgSend(body);
-  if (validated.ok === false) {
+  if (!validated.ok) {
     return NextResponse.json({ error: validated.error }, { status: 400 });
   }
-  const { phone, name, email, message } = validated.value;
+  const { phone, name, email, message } = validated.data;
 
   const token = process.env.DISPOGENIUS_PIT_TOKEN;
   if (!token) {

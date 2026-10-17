@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import {
   buildInteractionsFromDg,
   cleanBuyerName,
@@ -499,10 +499,10 @@ describe("validateDgSend", () => {
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.phone).toBe("(555) 123-4567");
-      expect(result.value.message).toBe("Still interested in selling?");
-      expect(result.value.name).toBe("Jane Roe");
-      expect(result.value.email).toBe("jane@example.com");
+      expect(result.data.phone).toBe("(555) 123-4567");
+      expect(result.data.message).toBe("Still interested in selling?");
+      expect(result.data.name).toBe("Jane Roe");
+      expect(result.data.email).toBe("jane@example.com");
     }
   });
 
@@ -510,8 +510,8 @@ describe("validateDgSend", () => {
     const result = validateDgSend({ phone: "+1 555 123 4567", message: "hi" });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.name).toBe("");
-      expect(result.value.email).toBe("");
+      expect(result.data.name).toBe("");
+      expect(result.data.email).toBe("");
     }
   });
 
@@ -523,19 +523,19 @@ describe("validateDgSend", () => {
   it("rejects a missing message", () => {
     const result = validateDgSend({ phone: "5551234567", message: "   " });
     expect(result.ok).toBe(false);
-    if (result.ok === false) expect(result.error).toContain("message");
+    if (!result.ok) expect(result.error).toContain("message");
   });
 
   it("rejects a missing or too-short phone", () => {
     const result = validateDgSend({ phone: "12345", message: "hello" });
     expect(result.ok).toBe(false);
-    if (result.ok === false) expect(result.error).toContain("phone");
+    if (!result.ok) expect(result.error).toContain("phone");
   });
 
   it("rejects an over-long message", () => {
     const result = validateDgSend({ phone: "5551234567", message: "x".repeat(1601) });
     expect(result.ok).toBe(false);
-    if (result.ok === false) expect(result.error).toContain("too long");
+    if (!result.ok) expect(result.error).toContain("too long");
   });
 });
 

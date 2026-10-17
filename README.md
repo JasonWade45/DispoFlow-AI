@@ -160,7 +160,7 @@ npm test
 
 ## Development notes
 
-- `tsconfig` uses `"strict": false` — after `if (!x.ok)` you must check `x.ok === false` to narrow unions.
+- `tsconfig` uses `"strict": true`. Fallible operations return `Result<T>` from `src/lib/result.ts` — narrow with `if (!r.ok)`.
 - `export const runtime = "nodejs"` is forbidden in this Next version; use `maxDuration` instead. Check `node_modules/next/dist/docs/` before writing route code.
 - Shell here is PowerShell: no `&&`, no `grep`/`head`.
 - Never run `next build` while `next dev` is running.
