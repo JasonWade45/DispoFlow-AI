@@ -43,6 +43,7 @@ An AI-powered real-estate dispositions CRM. It pulls motivated-seller leads from
 ### 4. Supabase (cloud persistence)
 - `app_state` table stores the whole workspace state (`api/state`), so data survives across devices/restarts.
 - Store hydrates from the cloud on load and saves debounced on change.
+- The 7 core collections (properties, buyers, relationships, interactions, tasks, offers, access_infoTable) can optionally be stored as normalized tables — see [Database schema (normalized tables)](#database-schema-normalized-tables).
 
 ### 5. Trello
 - API proxy, board/list/card import for migrating existing pipelines.
@@ -81,7 +82,7 @@ An AI-powered real-estate dispositions CRM. It pulls motivated-seller leads from
 
 - **Next.js 16.4** (App Router, `cacheComponents`, Turbopack) + **React 19**
 - **TypeScript** + **Tailwind CSS 4**
-- **Vitest** + jsdom — **168 tests passing**
+- **Vitest** + jsdom — **177 tests passing**
 - **Supabase** (cloud state), **Groq** (AI), **Google OAuth** (Sheets), **GoHighLevel** (DispoGenius SMS), **Trello**, **Vercel** (hosting + cron)
 
 ## Getting started
@@ -113,6 +114,8 @@ GROQ_MODEL=openai/gpt-oss-120b
 NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
+# Optional: DATA_SOURCE=tables reads/writes the 7 core collections as real
+# tables (dual-written with app_state). Default (unset or blob) = blob only.
 
 # App
 NEXT_PUBLIC_APP_URL=http://localhost:3000
@@ -120,6 +123,24 @@ CRON_SECRET=...
 ```
 
 > **Deploying to Vercel:** add the same variables in Project Settings → Environment Variables, set `NEXT_PUBLIC_APP_URL` to your production URL, authorize the production OAuth callback in Google Cloud Console, and put `CRON_SECRET` there too so the daily sync cron works. Publish the Google OAuth app to Production (Testing mode expires sessions after 7 days).
+
+## Database schema (normalized tables)
+
+The 7 core collections can live in real Postgres tables instead of the `app_state` JSON blob, selected by the `DATA_SOURCE` env var:
+
+- **unset or `blob` (default)** — everything reads/writes `app_state`, exactly as before.
+- **`tables`** — dual write: every save writes **both** `app_state` and the tables; loads read the core collections from the tables and fall back to the blob if the tables are unreachable or still empty. The blob always stays complete, so reverting is just removing the env var.
+
+### One-time migration runbook (Supabase SQL editor, in order)
+
+1. `supabase/schema.sql` — already applied in this project (creates `app_state`).
+2. `supabase/migrations/0001_normalize_schema.sql` — creates the 7 tables, indexes, and deny-all RLS (service role only); workspace-scoped RLS policies land in Phase 3.
+3. `supabase/migrations/0001_normalize_backfill.sql` — copies the blob into the tables. Idempotent: re-running refreshes tables from the blob (rows without `id` are skipped; a cast error means a corrupt value in the blob).
+4. Set `DATA_SOURCE=tables` in the deployment env and redeploy.
+
+### Revert
+
+Remove `DATA_SOURCE` (or set it to `blob`) and redeploy — the blob was dual-written the whole time, so no data migration back is needed. To refresh the tables from the blob again later, re-run step 3.
 
 ## Project structure
 
@@ -156,7 +177,7 @@ src/
 npm test
 ```
 
-168 tests across 11 files cover sheet mapping/grouped-row sync, DispoGenius import/enrichment/relinking, the daily sync pipeline, AI follow-up generation, task actions, merging, and scraping parsing.
+177 tests across 12 files cover sheet mapping/grouped-row sync, DispoGenius import/enrichment/relinking, the daily sync pipeline, AI follow-up generation, task actions, merging, scraping parsing, and the normalized-table repository (row mapping, failure fallback, save round-trips).
 
 ## Development notes
 
@@ -164,4 +185,4 @@ npm test
 - `export const runtime = "nodejs"` is forbidden in this Next version; use `maxDuration` instead. Check `node_modules/next/dist/docs/` before writing route code.
 - Shell here is PowerShell: no `&&`, no `grep`/`head`.
 - Never run `next build` while `next dev` is running.
-- The app state is the single source of truth for the UI and is mirrored to Supabase.
+- The app state is the single source of truth for the UI and is mirrored to Supabase; `DATA_SOURCE=tables` additionally mirrors the 7 core collections to normalized tables (see [Database schema](#database-schema-normalized-tables)).
