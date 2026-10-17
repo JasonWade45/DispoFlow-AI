@@ -126,3 +126,48 @@ export const sheetsMetaResponseSchema = z.object({
     .nullable()
     .optional(),
 });
+
+export const trelloBoardsResponseSchema = z.array(
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    url: z.string().optional(),
+    desc: z.string().optional(),
+    dateLastActivity: z.string().optional(),
+  }),
+);
+
+export const trelloListsResponseSchema = z.array(
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    pos: z.number().optional(),
+    closed: z.boolean().optional(),
+  }),
+);
+
+export const trelloCardSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  desc: z.string(),
+  idList: z.string(),
+  idBoard: z.string(),
+  shortUrl: z.string(),
+  dateLastActivity: z.string(),
+  due: z.string().nullable().optional(),
+  labels: z.array(z.unknown()).optional(),
+  attachments: z
+    .array(
+      z.object({
+        id: z.string(),
+        url: z.string(),
+        name: z.string(),
+        previews: z.array(z.object({ url: z.string() })).optional(),
+        type: z.string().optional(),
+        isUpload: z.boolean().optional(),
+      }),
+    )
+    .optional(),
+});
+
+export const trelloCardsResponseSchema = z.array(trelloCardSchema);

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { trelloListsResponseSchema } from "@/lib/schemas"
 
 const TRELLO_KEY = process.env.TRELLO_API_KEY
 const TRELLO_TOKEN = process.env.TRELLO_TOKEN
@@ -33,8 +34,14 @@ export async function GET(
       const detail = await res.text()
       return NextResponse.json({ error: "trello_api_failed", detail }, { status: 500 })
     }
-    const lists = await res.json()
-    return NextResponse.json({ lists })
+    const parsed = trelloListsResponseSchema.safeParse(await res.json())
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "trello_api_failed", detail: "Unexpected response from Trello" },
+        { status: 500 },
+      )
+    }
+    return NextResponse.json({ lists: parsed.data })
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "failed" },

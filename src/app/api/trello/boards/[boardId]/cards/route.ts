@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { trelloCardsResponseSchema } from "@/lib/schemas"
 
 const TRELLO_KEY = process.env.TRELLO_API_KEY
 const TRELLO_TOKEN = process.env.TRELLO_TOKEN
@@ -9,28 +10,6 @@ function authFromRequest(request: NextRequest): { key: string; token: string } |
   if (headerKey && headerToken) return { key: headerKey, token: headerToken }
   if (TRELLO_KEY && TRELLO_TOKEN) return { key: TRELLO_KEY, token: TRELLO_TOKEN }
   return null
-}
-
-type TrelloAttachment = {
-  id: string
-  url: string
-  name: string
-  previews?: { url: string }[]
-  type?: string
-  isUpload?: boolean
-}
-
-type TrelloCard = {
-  id: string
-  name: string
-  desc: string
-  idList: string
-  idBoard: string
-  shortUrl: string
-  dateLastActivity: string
-  due: string | null
-  labels: { id: string; name: string; color: string | null }[]
-  attachments: TrelloAttachment[]
 }
 
 export async function GET(
@@ -61,8 +40,14 @@ export async function GET(
       const detail = await res.text()
       return NextResponse.json({ error: "trello_api_failed", detail }, { status: 500 })
     }
-    const cards: TrelloCard[] = await res.json()
-    return NextResponse.json({ cards })
+    const parsed = trelloCardsResponseSchema.safeParse(await res.json())
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "trello_api_failed", detail: "Unexpected response from Trello" },
+        { status: 500 },
+      )
+    }
+    return NextResponse.json({ cards: parsed.data })
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "failed" },
