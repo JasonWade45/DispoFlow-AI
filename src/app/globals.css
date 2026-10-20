@@ -28,3 +28,15 @@ body {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Reports print as landscape A4 (used by the Offers report "Export PDF"). */
+@page {
+  size: A4 landscape;
+  margin: 10mm;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+}

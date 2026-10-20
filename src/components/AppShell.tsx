@@ -44,7 +44,7 @@ export default function AppShell({
 
   return (
     <div className="flex min-h-screen bg-slate-50">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-slate-200 bg-white lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-slate-200 bg-white lg:flex print:hidden">
         <div className="flex h-14 items-center gap-2 border-b border-slate-100 px-4">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-900 text-xs font-bold text-white">
             D
@@ -80,7 +80,7 @@ export default function AppShell({
       </aside>
 
       {menuOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
+        <div className="fixed inset-0 z-50 lg:hidden print:hidden">
           <div className="absolute inset-0 bg-slate-900/40" onClick={() => setMenuOpen(false)} />
           <div className="absolute inset-y-0 left-0 flex w-64 flex-col bg-white shadow-xl">
             <div className="flex h-14 items-center justify-between border-b border-slate-100 px-4">
@@ -101,8 +101,8 @@ export default function AppShell({
         </div>
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col lg:pl-60">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6">
+      <div className="flex min-w-0 flex-1 flex-col lg:pl-60 print:pl-0!">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6 print:hidden">
           <button
             onClick={() => setMenuOpen(true)}
             className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 lg:hidden"
@@ -162,9 +162,11 @@ export default function AppShell({
           </div>
         </header>
 
-        <main className="flex-1 px-4 py-5 sm:px-6 lg:px-8">
-          <SheetSyncBanner />
-          <SyncBanner />
+        <main className="flex-1 px-4 py-5 sm:px-6 lg:px-8 print:p-0!">
+          <div className="print:hidden">
+            <SheetSyncBanner />
+            <SyncBanner />
+          </div>
           {children}
         </main>
       </div>

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { Offer, OfferStatus } from "@/types";
 import { updateOffer } from "@/lib/actions";
-import { cx, formatDate, formatMoney } from "@/lib/format";
+import { cx, formatDate, formatMoney, todayIso } from "@/lib/format";
 import { buyerById, isOpenOffer, propertyById, userById } from "@/lib/selectors";
 import { useDb, useSession } from "@/lib/store";
 import { useModals } from "@/components/modals/ModalHost";
@@ -66,6 +66,8 @@ export default function OffersPage() {
   const modals = useModals();
   const [statusFilter, setStatusFilter] = useState("all");
   const [query, setQuery] = useState("");
+  const [tab, setTab] = useState<"list" | "report">("list");
+  const [reportQuery, setReportQuery] = useState("");
   const [selectedOffer, setSelectedOffer] = useState<Offer | null>(null);
   const [nextStatus, setNextStatus] = useState<string>("Draft");
 
@@ -98,6 +100,44 @@ export default function OffersPage() {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }, [db, statusFilter, query]);
 
+  const reportRows = useMemo(() => {
+    const q = reportQuery.trim().toLowerCase();
+    return [...db.offers]
+      .map((o) => ({
+        offer: o,
+        buyer: buyerById(db, o.buyerId),
+        property: propertyById(db, o.propertyId),
+      }))
+      .filter(({ offer, buyer, property }) => {
+        if (!q) return true;
+        const hay =
+          `${buyer?.fullName ?? ""} ${buyer?.phone ?? ""} ${buyer?.email ?? ""} ${property?.address ?? ""} ${offer.status}`.toLowerCase();
+        return hay.includes(q);
+      })
+      .sort((a, b) => b.offer.offerDate.localeCompare(a.offer.offerDate));
+  }, [db, reportQuery]);
+
+  const reportTotals = useMemo(
+    () => ({
+      count: reportRows.length,
+      amount: reportRows.reduce((sum, r) => sum + (r.offer.amount || 0), 0),
+    }),
+    [reportRows],
+  );
+
+  function exportPdf() {
+    const previous = document.title;
+    document.title = `DispoFlow Offers Report - ${todayIso()}`;
+    const restore = () => {
+      document.title = previous;
+      window.removeEventListener("afterprint", restore);
+      window.clearTimeout(timer);
+    };
+    window.addEventListener("afterprint", restore);
+    const timer = window.setTimeout(restore, 60000);
+    window.print();
+  }
+
   function openDetail(o: Offer) {
     setSelectedOffer(o);
     setNextStatus(o.status);
@@ -114,20 +154,138 @@ export default function OffersPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Offers"
-        subtitle={`${stats.open} open offer${stats.open === 1 ? "" : "s"} · ${stats.total} total`}
-        actions={<Button onClick={() => modals.addOffer()}>Add Offer</Button>}
-      />
+      <div className="print:hidden">
+        <PageHeader
+          title="Offers"
+          subtitle={`${stats.open} open offer${stats.open === 1 ? "" : "s"} · ${stats.total} total`}
+          actions={<Button onClick={() => modals.addOffer()}>Add Offer</Button>}
+        />
+      </div>
 
-      <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div
+        className="mb-5 inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm print:hidden"
+        role="tablist"
+        aria-label="Offers views"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "list"}
+          onClick={() => setTab("list")}
+          className={cx(
+            "rounded-md px-4 py-1.5 text-sm font-medium transition-colors",
+            tab === "list"
+              ? "bg-slate-900 text-white"
+              : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+          )}
+        >
+          List
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "report"}
+          onClick={() => setTab("report")}
+          className={cx(
+            "rounded-md px-4 py-1.5 text-sm font-medium transition-colors",
+            tab === "report"
+              ? "bg-slate-900 text-white"
+              : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+          )}
+        >
+          Received Offers
+        </button>
+      </div>
+
+      {tab === "report" ? (
+        <div>
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Received Offers Report</h2>
+              <p className="mt-0.5 text-sm text-slate-500">
+                {db.organization.name ? `${db.organization.name} · ` : ""}
+                {reportTotals.count} offers · {formatMoney(reportTotals.amount)} total · Generated{" "}
+                {formatDate(todayIso())}
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row print:hidden">
+              <Input
+                placeholder="Search buyer, phone, email, address…"
+                value={reportQuery}
+                onChange={(e) => setReportQuery(e.target.value)}
+                className="sm:w-72"
+                aria-label="Search offers report"
+              />
+              <Button onClick={exportPdf}>Export PDF</Button>
+            </div>
+          </div>
+
+          {reportRows.length === 0 ? (
+            <EmptyState title="No offers found" body="Try a different search." />
+          ) : (
+            <Card className="overflow-hidden print:shadow-none">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm print:text-[11px]">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-[11px] uppercase tracking-wide text-slate-400 print:text-slate-700">
+                      <th className="px-4 py-3 font-medium">Property</th>
+                      <th className="px-4 py-3 font-medium">Buyer</th>
+                      <th className="px-4 py-3 font-medium">Phone</th>
+                      <th className="px-4 py-3 font-medium">Email</th>
+                      <th className="px-4 py-3 font-medium">Amount</th>
+                      <th className="px-4 py-3 font-medium">Offer Date</th>
+                      <th className="px-4 py-3 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 print:divide-slate-200">
+                    {reportRows.map(({ offer, buyer, property }) => (
+                      <tr key={offer.id} className="align-top">
+                        <td className="px-4 py-2.5 font-medium text-slate-800">
+                          {property?.address ?? "—"}
+                        </td>
+                        <td className="px-4 py-2.5 text-slate-800">
+                          {buyer?.fullName ?? "—"}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-slate-600">
+                          {buyer?.phone || "—"}
+                        </td>
+                        <td className="px-4 py-2.5 text-slate-600">{buyer?.email || "—"}</td>
+                        <td className="whitespace-nowrap px-4 py-2.5 font-semibold text-slate-900">
+                          {formatMoney(offer.amount)}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-slate-600">
+                          {formatDate(offer.offerDate)}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <OfferStatusPill status={offer.status} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-slate-200 font-semibold text-slate-900">
+                      <td className="px-4 py-3" colSpan={4}>
+                        Total · {reportTotals.count} offers
+                      </td>
+                      <td className="px-4 py-3">{formatMoney(reportTotals.amount)}</td>
+                      <td className="px-4 py-3" colSpan={2} />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </Card>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4 print:hidden">
         <StatChip label="Total Offers" value={String(stats.total)} />
         <StatChip label="Open" value={String(stats.open)} />
         <StatChip label="Accepted" value={String(stats.accepted)} />
         <StatChip label="Win Rate" value={stats.winRate} />
       </div>
 
-      <div className="mb-4 flex flex-col gap-2 sm:flex-row">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row print:hidden">
         <Select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
@@ -208,6 +366,8 @@ export default function OffersPage() {
           </div>
         )}
       </Card>
+        </>
+      )}
 
       {selectedOffer && (
         <Modal
