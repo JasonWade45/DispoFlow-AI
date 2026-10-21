@@ -82,7 +82,7 @@ An AI-powered real-estate dispositions CRM. It pulls motivated-seller leads from
 
 - **Next.js 16.4** (App Router, `cacheComponents`, Turbopack) + **React 19**
 - **TypeScript** + **Tailwind CSS 4**
-- **Vitest** + jsdom — **177 tests passing**
+- **Vitest** + jsdom — **220 tests passing**
 - **Supabase** (cloud state), **Groq** (AI), **Google OAuth** (Sheets), **GoHighLevel** (DispoGenius SMS), **Trello**, **Vercel** (hosting + cron)
 
 ## Getting started
@@ -131,16 +131,26 @@ The 7 core collections can live in real Postgres tables instead of the `app_stat
 - **unset or `blob` (default)** — everything reads/writes `app_state`, exactly as before.
 - **`tables`** — dual write: every save writes **both** `app_state` and the tables; loads read the core collections from the tables and fall back to the blob if the tables are unreachable or still empty. The blob always stays complete, so reverting is just removing the env var.
 
+Integrity rules in `tables` mode:
+
+- Loads are **workspace-scoped** (`workspace_id`), so rows of other workspaces are never returned and never deleted.
+- Saves upsert first, then **delete-sync** the rows that are absent from the payload — but only when the payload actually came from a tables load (the client echoes the load's `source`); a blob-fallback payload only upserts, never deletes.
+- A row that fails to parse is logged, skipped, and protected from delete-sync instead of failing the whole load.
+- Saving to the blob while the tables still hold data logs an error (mixed-mode writer), and a save that drops a guarded collection (offers/properties/buyers/relationships/tasks) by ≥50% logs an alert; every `app_state` update is also snapshotted into `app_state_history` by migration 0002.
+
 ### One-time migration runbook (Supabase SQL editor, in order)
 
 1. `supabase/schema.sql` — already applied in this project (creates `app_state`).
 2. `supabase/migrations/0001_normalize_schema.sql` — creates the 7 tables, indexes, and deny-all RLS (service role only); workspace-scoped RLS policies land in Phase 3.
 3. `supabase/migrations/0001_normalize_backfill.sql` — copies the blob into the tables. Idempotent: re-running refreshes tables from the blob (rows without `id` are skipped; a cast error means a corrupt value in the blob).
-4. Set `DATA_SOURCE=tables` in the deployment env and redeploy.
+4. `supabase/migrations/0002_state_backups_and_rls.sql` — snapshots every `app_state` update into `app_state_history` (latest 25 per key, restorable by hand — see the comment inside the file) and replaces the deny-all policies with workspace-scoped RLS (inert until Supabase Auth is adopted; the service role is unaffected).
+5. Set `DATA_SOURCE=tables` in the deployment env and redeploy.
 
 ### Revert
 
 Remove `DATA_SOURCE` (or set it to `blob`) and redeploy — the blob was dual-written the whole time, so no data migration back is needed. To refresh the tables from the blob again later, re-run step 3.
+
+> **Warning before re-running step 3:** the backfill copies the blob *into* the tables. If the blob is stale (e.g. the 2026-10-20 import wiped collections and left `offers = 0` in the blob while the tables held 399), re-running it overwrites good table data. Compare row counts first (`select count(*) from offers;` vs the blob), and prefer restoring the blob from `app_state_history` (migration 0002) instead.
 
 ## Project structure
 
@@ -177,7 +187,7 @@ src/
 npm test
 ```
 
-177 tests across 12 files cover sheet mapping/grouped-row sync, DispoGenius import/enrichment/relinking, the daily sync pipeline, AI follow-up generation, task actions, merging, scraping parsing, and the normalized-table repository (row mapping, failure fallback, save round-trips).
+220 tests across 13 files cover sheet mapping/grouped-row sync, DispoGenius import/enrichment/relinking, the daily sync pipeline, AI follow-up generation, task actions, merging, overdue queues, scraping parsing, and the normalized-table repository (row mapping, workspace scoping, skip-on-parse-failure, delete-sync, save round-trips).
 
 ## Development notes
 
