@@ -22,8 +22,11 @@ function cookieOptions(maxAge: number) {
  * Runs a route handler with a valid Google access token.
  *
  * - Uses the cached `gs_access_token` cookie when present.
- * - Otherwise exchanges `gs_refresh_token` for a new access token and persists it
- *   on the response (so we don't refresh on every single request).
+ * - If Google rejects the cached token (status 401), transparently exchanges
+ *   `gs_refresh_token` for a fresh access token and retries the handler once,
+ *   so an expired-but-stored token never surfaces as a dead-end error.
+ * - Otherwise exchanges `gs_refresh_token` for a new access token and persists
+ *   it on the response (so we don't refresh on every single request).
  * - Returns a precise error when re-authorization is required (Google says
  *   `invalid_grant` — the refresh token was expired or revoked), so the UI can
  *   show a Reconnect button instead of a dead end.
@@ -42,14 +45,24 @@ export async function withSheetsAuth(
   }
 
   const cached = request.cookies.get("gs_access_token")?.value;
-  if (cached) return handler(cached);
+  let cachedRejected = false;
+  if (cached) {
+    const first = await handler(cached);
+    if (first.status !== 401) return first;
+    // Google rejected the cached token — fall through to a refresh + retry.
+    cachedRejected = true;
+  }
 
   const refreshCookie = request.cookies.get("gs_refresh_token");
   if (!refreshCookie?.value) {
-    return NextResponse.json(
-      { error: "not_authorized", message: "Connect a Google account first" },
+    const response = NextResponse.json(
+      cachedRejected
+        ? { error: "reauth_required", message: SHEETS_REAUTH_MESSAGE }
+        : { error: "not_authorized", message: "Connect a Google account first" },
       { status: 401 },
     );
+    if (cachedRejected) response.cookies.delete("gs_access_token");
+    return response;
   }
 
   let res: Response;
@@ -74,12 +87,19 @@ export async function withSheetsAuth(
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     const invalidGrant = detail.includes("invalid_grant");
-    return NextResponse.json(
+    const response = NextResponse.json(
       invalidGrant
         ? { error: "reauth_required", message: SHEETS_REAUTH_MESSAGE, detail }
         : { error: "refresh_failed", message: "Could not refresh the Google session", detail },
       { status: invalidGrant ? 401 : 503 },
     );
+    if (invalidGrant) {
+      // The cached access token is useless now; drop it so the next request
+      // goes straight to the refresh path (which keeps reporting
+      // reauth_required until the user reconnects).
+      response.cookies.delete("gs_access_token");
+    }
+    return response;
   }
 
   let raw: unknown;
@@ -107,6 +127,12 @@ export async function withSheetsAuth(
   }
 
   const response = await handler(token);
+  if (response.status === 401) {
+    // The brand-new token was rejected too — don't cache it, and drop any
+    // stale cached copy so we don't loop on it next request.
+    response.cookies.delete("gs_access_token");
+    return response;
+  }
   response.cookies.set("gs_access_token", token, cookieOptions(parsed.data.expires_in ?? 3600));
   if (parsed.data.refresh_token) {
     response.cookies.set(

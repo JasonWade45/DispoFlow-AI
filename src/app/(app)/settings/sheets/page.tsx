@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDb } from "@/lib/store";
-import { updateDb } from "@/lib/store";
+import { updateDb, getDb } from "@/lib/store";
 import { purgeSheetImport } from "@/lib/actions";
 import { detectPotentialDuplicates, mergeBuyers } from "@/lib/merge";
 import { importDispoData, type DispoImportPayload } from "@/lib/import-dispo";
@@ -27,6 +27,17 @@ import {
   Select,
 } from "@/components/ui";
 
+const REAUTH_ERRORS: ReadonlySet<string> = new Set([
+  SHEETS_REAUTH_MESSAGE,
+  "not_authorized",
+  "reauth_required",
+  "upstream_unauthorized",
+]);
+
+function isReauthError(value: string | null | undefined): boolean {
+  return Boolean(value && REAUTH_ERRORS.has(value));
+}
+
 export default function GoogleSheetsPage() {
   const db = useDb();
   const [connecting, setConnecting] = useState(false);
@@ -50,24 +61,20 @@ export default function GoogleSheetsPage() {
   const [aiMapping, setAiMapping] = useState(false);
   const [aiMapNote, setAiMapNote] = useState<string | null>(null);
   const [dataQualityReview, setDataQualityReview] = useState(false);
-  const [potentialDuplicates, setPotentialDuplicates] = useState<
-    Array<{
-      buyerId: string
-      candidateBuyerId: string
-      confidence: number
-      evidence: Array<{ field: string; existing: string; candidate: string }>
-    }>
-  >([]);
 
   const connection = db.sheetConnections[0];
   const showPicker = authorized || Boolean(connection?.isConnected);
   const [needsReauth, setNeedsReauth] = useState(false);
 
-  const connectionNeedsReauth =
-    needsReauth ||
-    connection?.lastSyncError === SHEETS_REAUTH_MESSAGE ||
-    connection?.lastSyncError === "not_authorized" ||
-    connection?.lastSyncError === "reauth_required";
+  const connectionNeedsReauth = needsReauth || isReauthError(connection?.lastSyncError);
+
+  const potentialDuplicates = useMemo(
+    () =>
+      db.buyers.length > 1
+        ? detectPotentialDuplicates(db).filter((d) => d.confidence >= 50)
+        : [],
+    [db],
+  );
 
   function buildInspectRange(
     title: string,
@@ -87,7 +94,11 @@ export default function GoogleSheetsPage() {
       if (!res.ok) {
         if (data.error === "not_configured") {
           setError("Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your environment.");
-        } else if (data.error === "not_authorized" || data.error === "reauth_required") {
+        } else if (
+          data.error === "not_authorized" ||
+          data.error === "reauth_required" ||
+          data.error === "upstream_unauthorized"
+        ) {
           setAuthorized(false);
           setNeedsReauth(true);
         } else {
@@ -98,6 +109,18 @@ export default function GoogleSheetsPage() {
       setSpreadsheets(data.spreadsheets ?? []);
       setAuthorized(true);
       setNeedsReauth(false);
+      // A successful Drive read proves the session is valid again — drop a
+      // stale reauth error so the "session expired" UI does not stick around
+      // until the next sync happens to overwrite it.
+      const conn = getDb().sheetConnections[0];
+      if (conn && isReauthError(conn.lastSyncError)) {
+        updateDb((d) => ({
+          ...d,
+          sheetConnections: d.sheetConnections.map((c) =>
+            c.id === conn.id ? { ...c, lastSyncError: null } : c,
+          ),
+        }));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error");
     } finally {
@@ -159,15 +182,6 @@ export default function GoogleSheetsPage() {
     if (headers.length === 0 || rows.length === 0) return false;
     return detectGroupedRows(headers, rows, mappings);
   }, [headers, rows, mappings]);
-
-  useEffect(() => {
-    if (db.buyers.length > 1) {
-      const duplicates = detectPotentialDuplicates(db);
-      setPotentialDuplicates(
-        duplicates.filter((d) => d.confidence >= 50)
-      );
-    }
-  }, [db.buyers]);
 
   async function handleConnect() {
     setConnecting(true);

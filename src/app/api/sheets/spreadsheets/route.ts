@@ -11,6 +11,10 @@ export async function GET(request: NextRequest) {
       )
       if (!res.ok) {
         const err = await res.text()
+        if (res.status === 401) {
+          // token rejected by Google — lets withSheetsAuth refresh + retry
+          return NextResponse.json({ error: 'upstream_unauthorized', detail: err }, { status: 401 })
+        }
         return NextResponse.json({ error: 'drive_list_failed', detail: err }, { status: 500 })
       }
       const raw: unknown = await res.json()
