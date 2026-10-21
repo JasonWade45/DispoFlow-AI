@@ -68,10 +68,10 @@ describe("mergeCloudConflict", () => {
   it("takes non-core fields (settings, org) from the remote copy whole", () => {
     const local = db();
     const remote = db();
-    local.settings.followUpOverdueDays = 7;
-    remote.settings.followUpOverdueDays = 3;
+    local.settings.priorityRulesEnabled = true;
+    remote.settings.priorityRulesEnabled = false;
     const merged = mergeCloudConflict(local, remote);
-    expect(merged.settings.followUpOverdueDays).toBe(3);
+    expect(merged.settings.priorityRulesEnabled).toBe(false);
   });
 
   it("merges users by id with remote winning ties (no timestamps)", () => {
