@@ -62,14 +62,19 @@ export default function GenerateFollowUpModal({
 
   useEffect(() => {
     if (!open) return;
-    if (defaultBuyerId && !buyerId) setBuyerId(defaultBuyerId);
-    if (defaultPropertyId && !propertyId) setPropertyId(defaultPropertyId);
-  }, [open, defaultBuyerId, defaultPropertyId]);
+    const t = window.setTimeout(() => {
+      if (defaultBuyerId && !buyerId) setBuyerId(defaultBuyerId);
+      if (defaultPropertyId && !propertyId) setPropertyId(defaultPropertyId);
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [open, defaultBuyerId, defaultPropertyId, buyerId, propertyId]);
 
   useEffect(() => {
     if (!open || !buyerId || propertyId) return;
     const rel = db.relationships.find((r) => r.buyerId === buyerId);
-    if (rel) setPropertyId(rel.propertyId);
+    if (!rel) return;
+    const t = window.setTimeout(() => setPropertyId(rel.propertyId), 0);
+    return () => window.clearTimeout(t);
   }, [open, buyerId, propertyId, db.relationships]);
 
   useEffect(() => {
