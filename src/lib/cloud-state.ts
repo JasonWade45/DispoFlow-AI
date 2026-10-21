@@ -191,6 +191,80 @@ export async function loadCloudState(): Promise<CloudState | null> {
   return { db: { ...base.db, ...core }, updatedAt: base.updatedAt, source: "tables" };
 }
 
+export type CoreCounts = Record<keyof CoreWorkspace, number>;
+
+/** Row counts of the 7 core collections as they exist in `db` (blob view). */
+export function coreCounts(db: DB): CoreCounts {
+  return {
+    properties: db.properties.length,
+    buyers: db.buyers.length,
+    relationships: db.relationships.length,
+    interactions: db.interactions.length,
+    tasks: db.tasks.length,
+    offers: db.offers.length,
+    access_infoTable: db.access_infoTable.length,
+  };
+}
+
+const COUNT_TABLES: Array<[keyof CoreCounts, string]> = [
+  ["properties", "properties"],
+  ["buyers", "buyers"],
+  ["relationships", "buyer_properties"],
+  ["interactions", "interactions"],
+  ["tasks", "tasks"],
+  ["offers", "offers"],
+  ["access_infoTable", "access_info"],
+];
+
+async function countTables(workspaceId: string): Promise<CoreCounts | null> {
+  const sb = getClient();
+  if (!sb) return null;
+  try {
+    const results = await Promise.all(
+      COUNT_TABLES.map(async ([key, table]) => {
+        const { count, error } = await sb
+          .from(table)
+          .select("id", { count: "exact", head: true })
+          .eq("workspace_id", workspaceId);
+        if (error || count === null) throw new Error(`count failed for ${table}`);
+        return [key, count] as const;
+      }),
+    );
+    return Object.fromEntries(results) as CoreCounts;
+  } catch (e) {
+    console.warn("[cloud-state] table counts unavailable, falling back to blob counts:", e);
+    return null;
+  }
+}
+
+export interface StateSummary {
+  found: boolean;
+  source: StateSource;
+  updatedAt: string;
+  counts: CoreCounts;
+}
+
+/**
+ * Cheap status payload for the Settings card (and anything else that wants
+ * health numbers): counts + provenance + last-write time, WITHOUT shipping the
+ * multi-megabyte db. In tables mode the counts come from the tables
+ * (head-count queries), so a stale blob can't lie about them.
+ */
+export async function loadCloudSummary(): Promise<StateSummary | null> {
+  const base = await loadBlob();
+  if (!base) return null;
+  let counts = coreCounts(base.db);
+  let source: StateSource = "blob";
+  if (inTablesMode()) {
+    const tableCounts = await countTables(base.db.organization?.id || "default");
+    if (tableCounts) {
+      counts = tableCounts;
+      source = "tables";
+    }
+  }
+  return { found: true, source, updatedAt: base.updatedAt, counts };
+}
+
 export interface SaveOptions {
   /**
    * Where the db being saved came from ("tables" = the last load read the

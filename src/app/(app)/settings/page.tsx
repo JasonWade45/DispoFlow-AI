@@ -137,6 +137,17 @@ function ListCard({
   );
 }
 
+function relativeTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const mins = Math.round((Date.now() - t) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 export default function SettingsPage() {
   const db = useDb();
   const session = useSession();
@@ -178,16 +189,36 @@ export default function SettingsPage() {
     };
   }, []);
 
-  const [cloudStatus, setCloudStatus] = useState<"checking" | "saved" | "local">("checking");
+  const [cloudSummary, setCloudSummary] = useState<{
+    status: "checking" | "saved" | "local";
+    counts: Record<string, number> | null;
+    source: string;
+    updatedAt: string;
+  }>({ status: "checking", counts: null, source: "", updatedAt: "" });
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/state");
-        const data = (await res.json()) as { configured?: boolean };
-        if (!cancelled) setCloudStatus(data.configured ? "saved" : "local");
+        const res = await fetch("/api/state/summary");
+        const data = (await res.json()) as {
+          configured?: boolean;
+          source?: string;
+          updatedAt?: string;
+          counts?: Record<string, number>;
+        };
+        if (cancelled) return;
+        if (data.configured) {
+          setCloudSummary({
+            status: "saved",
+            counts: data.counts ?? null,
+            source: data.source ?? "",
+            updatedAt: data.updatedAt ?? "",
+          });
+        } else {
+          setCloudSummary({ status: "local", counts: null, source: "", updatedAt: "" });
+        }
       } catch {
-        if (!cancelled) setCloudStatus("local");
+        if (!cancelled) setCloudSummary({ status: "local", counts: null, source: "", updatedAt: "" });
       }
     })();
     return () => {
@@ -368,16 +399,38 @@ export default function SettingsPage() {
               <div>
                 <p className="text-sm font-medium text-slate-800">Cloud storage</p>
                 <p className="mt-0.5 text-xs text-slate-400">
-                  {cloudStatus === "saved"
+                  {cloudSummary.status === "saved"
                     ? "Your CRM data is backed up to Supabase"
-                    : cloudStatus === "checking"
+                    : cloudSummary.status === "checking"
                       ? "Checking cloud status…"
                       : "Running on this device only (localStorage)"}
                 </p>
+                {cloudSummary.status === "saved" && cloudSummary.counts && (
+                  <p className="mt-0.5 text-xs tabular-nums text-slate-500">
+                    {[
+                      `${cloudSummary.counts.properties?.toLocaleString() ?? 0} properties`,
+                      `${cloudSummary.counts.buyers?.toLocaleString() ?? 0} buyers`,
+                      `${cloudSummary.counts.interactions?.toLocaleString() ?? 0} interactions`,
+                      `${cloudSummary.counts.offers?.toLocaleString() ?? 0} offers`,
+                    ].join(" · ")}
+                    {cloudSummary.source === "tables"
+                      ? " · normalized tables"
+                      : cloudSummary.source === "blob"
+                        ? " · JSON blob"
+                        : ""}
+                    {cloudSummary.updatedAt
+                      ? ` · updated ${relativeTime(cloudSummary.updatedAt)}`
+                      : ""}
+                  </p>
+                )}
               </div>
               <Badge
                 label={
-                  cloudStatus === "saved" ? "Backed up" : cloudStatus === "checking" ? "Checking…" : "Local only"
+                  cloudSummary.status === "saved"
+                    ? "Backed up"
+                    : cloudSummary.status === "checking"
+                      ? "Checking…"
+                      : "Local only"
                 }
               />
             </div>

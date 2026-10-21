@@ -82,7 +82,7 @@ An AI-powered real-estate dispositions CRM. It pulls motivated-seller leads from
 
 - **Next.js 16.4** (App Router, `cacheComponents`, Turbopack) + **React 19**
 - **TypeScript** + **Tailwind CSS 4**
-- **Vitest** + jsdom — **231 tests passing**
+- **Vitest** + jsdom — **233 tests passing**
 - **Supabase** (cloud state), **Groq** (AI), **Google OAuth** (Sheets), **GoHighLevel** (DispoGenius SMS), **Trello**, **Vercel** (hosting + cron)
 
 ## Getting started
@@ -143,6 +143,7 @@ Integrity rules in `tables` mode:
 - A row that fails to parse is logged, skipped, and protected from delete-sync instead of failing the whole load.
 - Saving to the blob while the tables still hold data logs an error (mixed-mode writer), and a save that drops a guarded collection (offers/properties/buyers/relationships/tasks) by ≥50% logs an alert; every `app_state` update is also snapshotted into `app_state_history` by migration 0002. Set `DATA_ALERT_WEBHOOK_URL` to also post those alerts to Slack/Discord.
 - Saves are **optimistic**: the client sends the `app_state.updated_at` it last saw (`base`); if another tab/device/cron wrote first, the server rejects with **409** and writes nothing. The client then merges per entity (newer `updatedAt` wins, ties keep the server copy) and retries — no more silent last-writer-wins overwrites. The daily-sync cron skips its save on conflict instead of clobbering a human edit.
+- `GET /api/state/summary` returns counts + `source` + last-write time **without** the full db (exact head-counts against the tables in `tables` mode, blob counts otherwise) — the Settings → Cloud storage card uses it for a cheap health check.
 
 ### One-time migration runbook (Supabase SQL editor, in order)
 
@@ -193,7 +194,7 @@ src/
 npm test
 ```
 
-231 tests across 15 files cover sheet mapping/grouped-row sync, DispoGenius import/enrichment/relinking, the daily sync pipeline, AI follow-up generation, task actions, merging, overdue queues, scraping parsing, the conflict merge (per-entity newer-wins), the alert webhook (delivery + cooldown), and the normalized-table repository (row mapping, workspace scoping, skip-on-parse-failure, delete-sync, save round-trips).
+233 tests across 16 files cover sheet mapping/grouped-row sync, DispoGenius import/enrichment/relinking, the daily sync pipeline, AI follow-up generation, task actions, merging, overdue queues, scraping parsing, the conflict merge (per-entity newer-wins), the alert webhook (delivery + cooldown), summary counts, and the normalized-table repository (row mapping, workspace scoping, skip-on-parse-failure, delete-sync, save round-trips).
 
 ## Development notes
 

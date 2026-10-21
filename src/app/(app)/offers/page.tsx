@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import type { Offer, OfferStatus } from "@/types";
+import { Fragment, useMemo, useState } from "react";
+import type { Buyer, Offer, OfferStatus, Property } from "@/types";
 import { updateOffer } from "@/lib/actions";
 import { cx, formatDate, formatMoney, todayIso } from "@/lib/format";
 import { buyerById, isOpenOffer, propertyById, userById } from "@/lib/selectors";
@@ -60,6 +60,30 @@ function StatChip({ label, value }: { label: string; value: string }) {
   );
 }
 
+type ReportRowData = {
+  offer: Offer;
+  buyer: Buyer | undefined;
+  property: Property | undefined;
+};
+
+function ReportRow({ offer, buyer, property }: ReportRowData) {
+  return (
+    <tr className="align-top">
+      <td className="px-4 py-2.5 font-medium text-slate-800">{property?.address ?? "—"}</td>
+      <td className="px-4 py-2.5 text-slate-800">{buyer?.fullName ?? "—"}</td>
+      <td className="whitespace-nowrap px-4 py-2.5 text-slate-600">{buyer?.phone || "—"}</td>
+      <td className="px-4 py-2.5 text-slate-600">{buyer?.email || "—"}</td>
+      <td className="whitespace-nowrap px-4 py-2.5 font-semibold text-slate-900">
+        {formatMoney(offer.amount)}
+      </td>
+      <td className="whitespace-nowrap px-4 py-2.5 text-slate-600">{formatDate(offer.offerDate)}</td>
+      <td className="px-4 py-2.5">
+        <OfferStatusPill status={offer.status} />
+      </td>
+    </tr>
+  );
+}
+
 export default function OffersPage() {
   const db = useDb();
   const session = useSession();
@@ -71,6 +95,7 @@ export default function OffersPage() {
   const [reportStatus, setReportStatus] = useState("all");
   const [reportFrom, setReportFrom] = useState("");
   const [reportTo, setReportTo] = useState("");
+  const [reportGroup, setReportGroup] = useState<"none" | "property" | "status">("none");
   const [selectedOffer, setSelectedOffer] = useState<Offer | null>(null);
   const [nextStatus, setNextStatus] = useState<string>("Draft");
 
@@ -136,6 +161,35 @@ export default function OffersPage() {
     }),
     [reportRows],
   );
+
+  // null = flat table; otherwise buckets with per-group subtotals (the footer
+  // keeps the overall total either way).
+  const reportGroups = useMemo(() => {
+    if (reportGroup === "none") return null;
+    const buckets = new Map<string, ReportRowData[]>();
+    for (const row of reportRows) {
+      const label =
+        reportGroup === "status"
+          ? row.offer.status
+          : row.property?.address || "Unknown property";
+      const bucket = buckets.get(label);
+      if (bucket) bucket.push(row);
+      else buckets.set(label, [row]);
+    }
+    const groups = Array.from(buckets, ([label, rows]) => ({
+      label,
+      rows,
+      count: rows.length,
+      amount: rows.reduce((sum, r) => sum + (r.offer.amount || 0), 0),
+    }));
+    groups.sort((a, b) =>
+      reportGroup === "status"
+        ? OFFER_STATUSES.indexOf(a.label as OfferStatus) -
+          OFFER_STATUSES.indexOf(b.label as OfferStatus)
+        : a.label.localeCompare(b.label),
+    );
+    return groups;
+  }, [reportRows, reportGroup]);
 
   function exportPdf() {
     const previous = document.title;
@@ -271,6 +325,16 @@ export default function OffersPage() {
                   </option>
                 ))}
               </Select>
+              <Select
+                value={reportGroup}
+                onChange={(e) => setReportGroup(e.target.value as "none" | "property" | "status")}
+                className="sm:w-44"
+                aria-label="Group report"
+              >
+                <option value="none">No grouping</option>
+                <option value="property">Group by property</option>
+                <option value="status">Group by status</option>
+              </Select>
               <Input
                 type="date"
                 value={reportFrom}
@@ -311,29 +375,36 @@ export default function OffersPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 print:divide-slate-200">
-                    {reportRows.map(({ offer, buyer, property }) => (
-                      <tr key={offer.id} className="align-top">
-                        <td className="px-4 py-2.5 font-medium text-slate-800">
-                          {property?.address ?? "—"}
-                        </td>
-                        <td className="px-4 py-2.5 text-slate-800">
-                          {buyer?.fullName ?? "—"}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-2.5 text-slate-600">
-                          {buyer?.phone || "—"}
-                        </td>
-                        <td className="px-4 py-2.5 text-slate-600">{buyer?.email || "—"}</td>
-                        <td className="whitespace-nowrap px-4 py-2.5 font-semibold text-slate-900">
-                          {formatMoney(offer.amount)}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-2.5 text-slate-600">
-                          {formatDate(offer.offerDate)}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <OfferStatusPill status={offer.status} />
-                        </td>
-                      </tr>
-                    ))}
+                    {reportGroups ? (
+                      reportGroups.map((group) => (
+                        <Fragment key={`${reportGroup}:${group.label}`}>
+                          <tr className="bg-slate-50 print:bg-slate-50">
+                            <td
+                              colSpan={7}
+                              className="px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+                            >
+                              {group.label}
+                            </td>
+                          </tr>
+                          {group.rows.map((row) => (
+                            <ReportRow key={row.offer.id} {...row} />
+                          ))}
+                          <tr className="border-t border-slate-200 font-medium text-slate-700">
+                            <td className="px-4 py-2 text-right text-xs" colSpan={4}>
+                              Subtotal · {group.label}
+                            </td>
+                            <td className="px-4 py-2 font-semibold text-slate-900">
+                              {formatMoney(group.amount)}
+                            </td>
+                            <td className="px-4 py-2 text-xs text-slate-500" colSpan={2}>
+                              {group.count} offer{group.count === 1 ? "" : "s"}
+                            </td>
+                          </tr>
+                        </Fragment>
+                      ))
+                    ) : (
+                      reportRows.map((row) => <ReportRow key={row.offer.id} {...row} />)
+                    )}
                   </tbody>
                   <tfoot>
                     <tr className="border-t border-slate-200 font-semibold text-slate-900">
