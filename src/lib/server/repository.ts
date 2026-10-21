@@ -23,9 +23,14 @@ import type {
 //   * meta jsonb carries the verbatim original entity (audit/future fields);
 //     it is written on save and never read on load (columns are the truth).
 //   * timestamps are text (exact ISO-8601 round-trip).
-//   * load is strict: any unparseable row => null => caller falls back to
-//     the blob (which is dual-written, so nothing is ever lost).
-//   * all-empty load => null => "not backfilled yet" fallback guard.
+//   * load is workspace-scoped: rows of other workspaces are never returned
+//     and (on delete-sync) never touched.
+//   * a row that fails parsing is logged and skipped (never deleted later:
+//     its id is remembered so delete-sync protects it); a failed table
+//     select or an all-empty load still returns null => blob fallback.
+//   * save upserts first, then (only when the caller opts in via
+//     allowDelete) removes table rows that are absent from the saved
+//     workspace — so in-app deletions actually propagate to the tables.
 // ---------------------------------------------------------------------------
 
 export interface CoreWorkspace {
@@ -39,13 +44,15 @@ export interface CoreWorkspace {
 }
 
 export interface RepoTransport {
-  select(table: string): Promise<unknown[] | null>;
+  select(table: string, workspaceId?: string): Promise<unknown[] | null>;
+  listKeys(table: string): Promise<Array<{ id: string; workspace_id: string }> | null>;
+  remove(table: string, ids: string[]): Promise<boolean>;
   upsert(table: string, rows: unknown[]): Promise<boolean>;
 }
 
 export interface Repository {
-  loadWorkspace(): Promise<CoreWorkspace | null>;
-  saveWorkspace(core: CoreWorkspace): Promise<boolean>;
+  loadWorkspace(workspaceId?: string): Promise<CoreWorkspace | null>;
+  saveWorkspace(core: CoreWorkspace, opts?: { allowDelete?: boolean }): Promise<boolean>;
 }
 
 const txt = z.string().default("");
@@ -556,17 +563,33 @@ function fromAccessInfo(entry: AccessInfoEntry): AccessInfoRow {
 
 // --- parsing ----------------------------------------------------------------
 
+// Ids of rows that failed parsing on the most recent load, per table.
+// saveWorkspace never deletes them (we could not read them => we cannot
+// claim they are gone from the user's point of view).
+const skippedRowIds = new Map<string, Set<string>>();
+
 async function loadTable<T>(
   transport: RepoTransport,
   table: string,
   parse: (value: unknown) => T | null,
+  workspaceId?: string,
 ): Promise<T[] | null> {
-  const raw = await transport.select(table);
+  const raw = await transport.select(table, workspaceId);
   if (raw === null) return null;
+  const skipped = new Set<string>();
+  skippedRowIds.set(table, skipped);
   const out: T[] = [];
   for (const item of raw) {
     const parsed = parse(item);
-    if (parsed === null) return null;
+    if (parsed === null) {
+      const id = String((item as { id?: unknown } | null)?.id ?? "<unknown>");
+      skipped.add(id);
+      console.error(
+        `[repository] skipping unparseable row (table=${table} id=${id})`,
+        JSON.stringify(item).slice(0, 500),
+      );
+      continue;
+    }
     out.push(parsed);
   }
   return out;
@@ -605,16 +628,16 @@ const parseAccessInfo = (v: unknown): AccessInfoEntry | null => {
 
 export function createRepository(transport: RepoTransport): Repository {
   return {
-    async loadWorkspace(): Promise<CoreWorkspace | null> {
+    async loadWorkspace(workspaceId?: string): Promise<CoreWorkspace | null> {
       const [properties, buyers, relationships, interactions, tasks, offers, accessInfo] =
         await Promise.all([
-          loadTable(transport, "properties", parseProperty),
-          loadTable(transport, "buyers", parseBuyer),
-          loadTable(transport, "buyer_properties", parseBuyerProperty),
-          loadTable(transport, "interactions", parseInteraction),
-          loadTable(transport, "tasks", parseTask),
-          loadTable(transport, "offers", parseOffer),
-          loadTable(transport, "access_info", parseAccessInfo),
+          loadTable(transport, "properties", parseProperty, workspaceId),
+          loadTable(transport, "buyers", parseBuyer, workspaceId),
+          loadTable(transport, "buyer_properties", parseBuyerProperty, workspaceId),
+          loadTable(transport, "interactions", parseInteraction, workspaceId),
+          loadTable(transport, "tasks", parseTask, workspaceId),
+          loadTable(transport, "offers", parseOffer, workspaceId),
+          loadTable(transport, "access_info", parseAccessInfo, workspaceId),
         ]);
       if (
         properties === null ||
@@ -649,7 +672,10 @@ export function createRepository(transport: RepoTransport): Repository {
       };
     },
 
-    async saveWorkspace(core: CoreWorkspace): Promise<boolean> {
+    async saveWorkspace(
+      core: CoreWorkspace,
+      opts: { allowDelete?: boolean } = {},
+    ): Promise<boolean> {
       const batches: Array<[string, unknown[]]> = [
         ["properties", core.properties.map(fromProperty)],
         ["buyers", core.buyers.map(fromBuyer)],
@@ -659,12 +685,55 @@ export function createRepository(transport: RepoTransport): Repository {
         ["offers", core.offers.map(fromOffer)],
         ["access_info", core.access_infoTable.map(fromAccessInfo)],
       ];
+
       const results = await Promise.all(
         batches.map(([table, rows]) =>
           rows.length > 0 ? transport.upsert(table, rows) : Promise.resolve(true),
         ),
       );
-      return results.every((ok) => ok);
+      if (!results.every((ok) => ok)) return false;
+      if (!opts.allowDelete) return true;
+
+      // Delete-sync: remove rows that belong to the saved workspaces but are
+      // no longer present in the canonical workspace. Rows we could not
+      // parse on load are protected; rows of other workspaces are untouched.
+      const workspaces = new Set<string>();
+      for (const rows of [
+        core.properties,
+        core.buyers,
+        core.relationships,
+        core.interactions,
+        core.tasks,
+        core.offers,
+        core.access_infoTable,
+      ]) {
+        for (const row of rows) workspaces.add(row.orgId);
+      }
+
+      let allOk = true;
+      for (const [table, rows] of batches) {
+        const keep = new Set(rows.map((r) => String((r as { id?: unknown }).id)));
+        const keys = await transport.listKeys(table);
+        if (keys === null) {
+          console.error(`[repository] delete-sync: could not list ids of ${table}`);
+          allOk = false;
+          continue;
+        }
+        const skipped = skippedRowIds.get(table) ?? new Set<string>();
+        const stale = keys
+          .filter(
+            (k) =>
+              workspaces.has(k.workspace_id) && !keep.has(k.id) && !skipped.has(k.id),
+          )
+          .map((k) => k.id);
+        if (stale.length > 0 && !(await transport.remove(table, stale))) {
+          console.error(
+            `[repository] delete-sync: failed to remove ${stale.length} row(s) from ${table}`,
+          );
+          allOk = false;
+        }
+      }
+      return allOk;
     },
   };
 }
@@ -684,12 +753,32 @@ function getClient(): SupabaseClient | null {
 
 function supabaseTransport(): RepoTransport {
   return {
-    async select(table: string): Promise<unknown[] | null> {
+    async select(table: string, workspaceId?: string): Promise<unknown[] | null> {
       const sb = getClient();
       if (!sb) return null;
-      const { data, error } = await sb.from(table).select("*");
+      let query = sb.from(table).select("*");
+      if (workspaceId) query = query.eq("workspace_id", workspaceId);
+      const { data, error } = await query;
       if (error) return null;
       return (data ?? null) as unknown[] | null;
+    },
+    async listKeys(table: string): Promise<Array<{ id: string; workspace_id: string }> | null> {
+      const sb = getClient();
+      if (!sb) return null;
+      const { data, error } = await sb.from(table).select("id, workspace_id");
+      if (error) return null;
+      return (data ?? []) as Array<{ id: string; workspace_id: string }>;
+    },
+    async remove(table: string, ids: string[]): Promise<boolean> {
+      const sb = getClient();
+      if (!sb) return false;
+      const CHUNK = 500;
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const chunk = ids.slice(i, i + CHUNK);
+        const { error } = await sb.from(table).delete().in("id", chunk);
+        if (error) return false;
+      }
+      return true;
     },
     async upsert(table: string, rows: unknown[]): Promise<boolean> {
       const sb = getClient();

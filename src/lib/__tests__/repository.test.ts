@@ -18,21 +18,46 @@ import type {
 
 interface FakeTransport extends RepoTransport {
   selects: string[];
+  selectWorkspaces: Array<string | undefined>;
   upserts: { table: string; rows: unknown[] }[];
+  listKeysCalls: string[];
+  removes: { table: string; ids: string[] }[];
   failSelect: string | null;
   failUpsert: string | null;
+  failListKeys: string | null;
 }
 
 function fakeTransport(seed: Partial<Record<string, unknown[]>> = {}): FakeTransport {
   return {
     selects: [],
+    selectWorkspaces: [],
     upserts: [],
+    listKeysCalls: [],
+    removes: [],
     failSelect: null,
     failUpsert: null,
-    async select(table: string) {
+    failListKeys: null,
+    async select(table: string, workspaceId?: string) {
       this.selects.push(table);
+      this.selectWorkspaces.push(workspaceId);
       if (table === this.failSelect) return null;
-      return seed[table] ?? [];
+      const rows = seed[table] ?? [];
+      if (!workspaceId) return rows;
+      return rows.filter(
+        (r) => (r as { workspace_id?: string }).workspace_id === workspaceId,
+      );
+    },
+    async listKeys(table: string) {
+      this.listKeysCalls.push(table);
+      if (table === this.failListKeys) return null;
+      return (seed[table] ?? []).map((r) => ({
+        id: String((r as { id?: unknown }).id),
+        workspace_id: String((r as { workspace_id?: unknown }).workspace_id ?? ""),
+      }));
+    },
+    async remove(table: string, ids: string[]) {
+      this.removes.push({ table, ids });
+      return true;
     },
     async upsert(table: string, rows: unknown[]) {
       this.upserts.push({ table, rows });
@@ -512,14 +537,34 @@ describe("loadWorkspace", () => {
     expect(await createRepository(t).loadWorkspace()).toBeNull();
   });
 
-  it("returns null when a row fails validation", async () => {
-    const t = fakeTransport({ properties: [{ id: 42 }] });
-    expect(await createRepository(t).loadWorkspace()).toBeNull();
+  it("skips an unparseable row instead of failing the whole load", async () => {
+    const t = fakeTransport({
+      properties: [
+        { id: "p-good", workspace_id: "org-7", address: "1 Main St" },
+        { id: 42 },
+      ],
+    });
+    const loaded = await createRepository(t).loadWorkspace();
+    expect(loaded).not.toBeNull();
+    expect(loaded?.properties).toHaveLength(1);
+    expect(loaded?.properties[0].id).toBe("p-good");
   });
 
   it("returns null when every table is empty (not backfilled)", async () => {
     const t = fakeTransport();
     expect(await createRepository(t).loadWorkspace()).toBeNull();
+  });
+
+  it("scopes the load to the requested workspace", async () => {
+    const t = fakeTransport({
+      offers: [
+        { id: "o-7", workspace_id: "org-7", buyer_id: "b1", property_id: "p1" },
+        { id: "o-9", workspace_id: "org-9", buyer_id: "b9", property_id: "p9" },
+      ],
+    });
+    const loaded = await createRepository(t).loadWorkspace("org-7");
+    expect(loaded?.offers.map((o) => o.id)).toEqual(["o-7"]);
+    expect(t.selectWorkspaces.every((w) => w === "org-7")).toBe(true);
   });
 });
 
@@ -578,6 +623,68 @@ describe("saveWorkspace", () => {
     };
     expect(await createRepository(t).saveWorkspace(empty)).toBe(true);
     expect(t.upserts).toHaveLength(0);
+  });
+
+  it("does not touch the tables unless allowDelete is set", async () => {
+    const t = fakeTransport();
+    expect(await createRepository(t).saveWorkspace(makeCore())).toBe(true);
+    expect(t.listKeysCalls).toHaveLength(0);
+    expect(t.removes).toHaveLength(0);
+  });
+});
+
+// --- delete-sync ------------------------------------------------------------
+
+describe("delete-sync (allowDelete)", () => {
+  it("removes rows that are absent from the saved workspace", async () => {
+    const t = fakeTransport({
+      properties: [
+        { id: "p1", workspace_id: "org-7" },
+        { id: "p-gone", workspace_id: "org-7" },
+      ],
+      offers: [
+        { id: "o1", workspace_id: "org-7" },
+        { id: "o-gone", workspace_id: "org-7" },
+      ],
+    });
+    const ok = await createRepository(t).saveWorkspace(makeCore(), { allowDelete: true });
+    expect(ok).toBe(true);
+    expect(t.removes).toEqual([
+      { table: "properties", ids: ["p-gone"] },
+      { table: "offers", ids: ["o-gone"] },
+    ]);
+  });
+
+  it("never touches rows of other workspaces", async () => {
+    const t = fakeTransport({
+      properties: [
+        { id: "p1", workspace_id: "org-7" },
+        { id: "p-other", workspace_id: "org-9" },
+      ],
+    });
+    const ok = await createRepository(t).saveWorkspace(makeCore(), { allowDelete: true });
+    expect(ok).toBe(true);
+    expect(t.removes).toHaveLength(0);
+  });
+
+  it("protects rows that failed to parse on load", async () => {
+    const t = fakeTransport({
+      properties: [
+        { id: "p-good", workspace_id: "org-7", address: "1 Main St" },
+        { id: 42, workspace_id: "org-7" },
+      ],
+    });
+    const loaded = await createRepository(t).loadWorkspace();
+    expect(loaded?.properties.map((p) => p.id)).toEqual(["p-good"]);
+
+    expect(await createRepository(t).saveWorkspace(loaded!, { allowDelete: true })).toBe(true);
+    expect(t.removes).toHaveLength(0);
+  });
+
+  it("returns false when ids cannot be listed", async () => {
+    const t = fakeTransport();
+    t.failListKeys = "properties";
+    expect(await createRepository(t).saveWorkspace(makeCore(), { allowDelete: true })).toBe(false);
   });
 });
 
