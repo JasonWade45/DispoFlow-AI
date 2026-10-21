@@ -68,6 +68,9 @@ export default function OffersPage() {
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<"list" | "report">("list");
   const [reportQuery, setReportQuery] = useState("");
+  const [reportStatus, setReportStatus] = useState("all");
+  const [reportFrom, setReportFrom] = useState("");
+  const [reportTo, setReportTo] = useState("");
   const [selectedOffer, setSelectedOffer] = useState<Offer | null>(null);
   const [nextStatus, setNextStatus] = useState<string>("Draft");
 
@@ -108,6 +111,15 @@ export default function OffersPage() {
         buyer: buyerById(db, o.buyerId),
         property: propertyById(db, o.propertyId),
       }))
+      .filter(({ offer }) => reportStatus === "all" || offer.status === reportStatus)
+      .filter(({ offer }) => {
+        if (!reportFrom && !reportTo) return true;
+        const day = offer.offerDate.slice(0, 10);
+        if (!day) return false;
+        if (reportFrom && day < reportFrom) return false;
+        if (reportTo && day > reportTo) return false;
+        return true;
+      })
       .filter(({ offer, buyer, property }) => {
         if (!q) return true;
         const hay =
@@ -115,7 +127,7 @@ export default function OffersPage() {
         return hay.includes(q);
       })
       .sort((a, b) => b.offer.offerDate.localeCompare(a.offer.offerDate));
-  }, [db, reportQuery]);
+  }, [db, reportQuery, reportStatus, reportFrom, reportTo]);
 
   const reportTotals = useMemo(
     () => ({
@@ -136,6 +148,36 @@ export default function OffersPage() {
     window.addEventListener("afterprint", restore);
     const timer = window.setTimeout(restore, 60000);
     window.print();
+  }
+
+  function exportCsv() {
+    const quote = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const header = ["Property", "Buyer", "Phone", "Email", "Amount", "Offer Date", "Status"];
+    const lines = [header.map(quote).join(",")];
+    for (const { offer, buyer, property } of reportRows) {
+      lines.push(
+        [
+          property?.address ?? "",
+          buyer?.fullName ?? "",
+          buyer?.phone ?? "",
+          buyer?.email ?? "",
+          String(offer.amount ?? ""),
+          offer.offerDate.slice(0, 10),
+          offer.status,
+        ]
+          .map(quote)
+          .join(","),
+      );
+    }
+    const csv = "\uFEFF" + lines.join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `DispoFlow-Offers-Report-${todayIso()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   function openDetail(o: Offer) {
@@ -208,14 +250,45 @@ export default function OffersPage() {
                 {formatDate(todayIso())}
               </p>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row print:hidden">
+            <div className="flex flex-wrap items-center gap-2 print:hidden">
               <Input
                 placeholder="Search buyer, phone, email, address…"
                 value={reportQuery}
                 onChange={(e) => setReportQuery(e.target.value)}
-                className="sm:w-72"
+                className="sm:w-64"
                 aria-label="Search offers report"
               />
+              <Select
+                value={reportStatus}
+                onChange={(e) => setReportStatus(e.target.value)}
+                className="sm:w-40"
+                aria-label="Filter report by status"
+              >
+                <option value="all">All statuses</option>
+                {OFFER_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+              <Input
+                type="date"
+                value={reportFrom}
+                onChange={(e) => setReportFrom(e.target.value)}
+                aria-label="Offers from date"
+                className="sm:w-40"
+              />
+              <span className="text-xs text-slate-400">to</span>
+              <Input
+                type="date"
+                value={reportTo}
+                onChange={(e) => setReportTo(e.target.value)}
+                aria-label="Offers to date"
+                className="sm:w-40"
+              />
+              <Button variant="secondary" onClick={exportCsv}>
+                Export CSV
+              </Button>
               <Button onClick={exportPdf}>Export PDF</Button>
             </div>
           </div>
