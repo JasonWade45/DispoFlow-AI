@@ -23,6 +23,9 @@ let localSavedAt = ''
 let cloudChecked = false
 let suppressCloudSave = false
 let cloudSaveTimer: ReturnType<typeof setTimeout> | null = null
+// Provenance of `db`'s core collections: only a load that actually came from
+// the normalized tables may drive delete-sync on the next save.
+let cloudSource: 'tables' | 'blob' = 'blob'
 
 function migrateV1toV2(parsed: Partial<DB> & Record<string, unknown>): DB {
   const base = createSeed()
@@ -187,6 +190,7 @@ async function syncFromCloud(): Promise<void> {
     // saved locally; otherwise keep local (it may hold unsynced edits).
     if (cloudAt && localSavedAt && cloudAt <= localSavedAt) return
     db = normalizeCloudDb(data.db)
+    cloudSource = data.source === 'tables' ? 'tables' : 'blob'
     localSavedAt = cloudAt
     try {
       window.localStorage.setItem(DB_KEY, JSON.stringify(db))
@@ -212,7 +216,7 @@ function scheduleCloudSave(): void {
         const res = await fetch('/api/state', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ db }),
+          body: JSON.stringify({ db, source: cloudSource }),
         })
         if (res.ok) {
           localSavedAt = new Date().toISOString()

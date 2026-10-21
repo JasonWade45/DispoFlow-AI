@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
     const payload = await fetchDgPayload(token, locationId);
     const { db: nextDb, result } = await runDailySync(db, payload, userId, now, { maxDrafts: 20 });
 
-    const saved = await saveCloudState(nextDb);
+    const saved = await saveCloudState(nextDb, { source: state?.source });
     return NextResponse.json({ ok: true, saved, result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Daily sync failed";

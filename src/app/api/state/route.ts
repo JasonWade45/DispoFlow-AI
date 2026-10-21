@@ -12,7 +12,13 @@ export async function GET() {
   if (!state) {
     return NextResponse.json({ configured: true, found: false }, { status: 200 });
   }
-  return NextResponse.json({ configured: true, found: true, ...state });
+  return NextResponse.json({
+    configured: true,
+    found: true,
+    source: state.source,
+    db: state.db,
+    updatedAt: state.updatedAt,
+  });
 }
 
 export async function PUT(request: NextRequest) {
@@ -29,7 +35,7 @@ export async function PUT(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Missing db payload" }, { status: 400 });
   }
-  const ok = await saveCloudState(parsed.data.db);
+  const ok = await saveCloudState(parsed.data.db, { source: parsed.data.source });
   if (!ok) {
     return NextResponse.json({ error: "Failed to save to Supabase" }, { status: 502 });
   }
