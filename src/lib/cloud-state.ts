@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { repository, type CoreWorkspace } from "@/lib/server/repository";
+import { sendAlert } from "@/lib/server/alerts";
 import type { DB } from "@/types";
 
 const TABLE = "app_state";
@@ -51,16 +52,17 @@ const GUARDED = ["offers", "properties", "buyers", "relationships", "tasks"] as 
 const DROP_ALERT_RATIO = 0.5;
 const DROP_ALERT_MIN = 20;
 
-function alertOnMassiveDrop(prev: DB, next: DB): void {
+async function alertOnMassiveDrop(prev: DB, next: DB): Promise<void> {
   for (const key of GUARDED) {
     const before = Array.isArray(prev[key]) ? prev[key].length : 0;
     const after = Array.isArray(next[key]) ? next[key].length : 0;
     if (before >= DROP_ALERT_MIN && after < before * DROP_ALERT_RATIO) {
-      console.error(
-        `[cloud-state] ALERT: ${key} dropped ${before} -> ${after} on save. ` +
-          `A snapshot of the previous state is kept in app_state_history ` +
-          `(migration 0002). Check for a stale instance writing in blob mode ` +
-          `or an import that replaces the whole workspace.`,
+      await sendAlert(
+        `drop:${key}`,
+        `${key} dropped ${before} -> ${after} on save. A snapshot of the ` +
+          `previous state is kept in app_state_history (migration 0002). ` +
+          `Check for a stale instance writing in blob mode or an import that ` +
+          `replaces the whole workspace.`,
       );
     }
   }
@@ -84,23 +86,65 @@ async function loadBlob(): Promise<CloudState | null> {
   };
 }
 
-async function saveBlob(db: DB): Promise<boolean> {
+interface BlobWriteResult {
+  ok: boolean;
+  /** The stored `updated_at` moved past the caller's base — nothing was written. */
+  conflict?: boolean;
+  /** Server timestamp of the stored (or just-written) row; the client's next base. */
+  updatedAt?: string;
+}
+
+async function saveBlob(db: DB, base?: string): Promise<BlobWriteResult> {
   const sb = getClient();
-  if (!sb) return false;
+  if (!sb) return { ok: false };
 
   const { data: prevRow } = await sb
     .from(TABLE)
-    .select("data")
+    .select("data, updated_at")
     .eq("key", STATE_KEY)
     .maybeSingle();
-  const prev = prevRow?.data as DB | null;
-  if (prev && typeof prev === "object") alertOnMassiveDrop(prev, db);
+  const prev = (prevRow?.data as DB | null) ?? null;
+  const currentAt = ((prevRow?.updated_at as string | null) ?? "");
+
+  // Optimistic concurrency: `base` is the updated_at the caller last observed.
+  // Reject before writing when another writer got there first (409 upstream).
+  if (base && prevRow && currentAt !== base) {
+    return { ok: false, conflict: true, updatedAt: currentAt };
+  }
+
+  if (prev && typeof prev === "object") await alertOnMassiveDrop(prev, db);
 
   const now = new Date().toISOString();
-  const { error } = await sb
+
+  // Conditional update closes the read-then-write race: if another writer
+  // slipped in between our read and this update, zero rows match the base.
+  if (base && prevRow) {
+    const { data: updated, error } = await sb
+      .from(TABLE)
+      .update({ data: db, updated_at: now })
+      .eq("key", STATE_KEY)
+      .eq("updated_at", base)
+      .select("updated_at");
+    if (error) return { ok: false };
+    const row = updated?.[0];
+    if (!row) {
+      const { data: cur } = await sb
+        .from(TABLE)
+        .select("updated_at")
+        .eq("key", STATE_KEY)
+        .maybeSingle();
+      return { ok: false, conflict: true, updatedAt: (cur?.updated_at as string) ?? "" };
+    }
+    return { ok: true, updatedAt: row.updated_at as string };
+  }
+
+  // No base (legacy client, first save, or row vanished): upsert as before.
+  const { data: written, error } = await sb
     .from(TABLE)
-    .upsert({ key: STATE_KEY, data: db, updated_at: now }, { onConflict: "key" });
-  return !error;
+    .upsert({ key: STATE_KEY, data: db, updated_at: now }, { onConflict: "key" })
+    .select("updated_at");
+  if (error || !written?.[0]) return { ok: false };
+  return { ok: true, updatedAt: written[0].updated_at as string };
 }
 
 // Blob-mode saves bypass the tables entirely. If the tables still hold data,
@@ -114,9 +158,10 @@ async function warnIfTablesHaveData(): Promise<void> {
       .from("properties")
       .select("id", { count: "exact", head: true });
     if (count && count > 0) {
-      console.error(
-        `[cloud-state] blob-only save while the properties table still has ${count} row(s) ` +
-          `— this instance is NOT using DATA_SOURCE=tables. Set DATA_SOURCE=tables ` +
+      await sendAlert(
+        "mixed-mode",
+        `blob-only save while the properties table still has ${count} row(s) — ` +
+          `this instance is NOT using DATA_SOURCE=tables. Set DATA_SOURCE=tables ` +
           `(Vercel env + restart dev) so the tables stay in sync.`,
       );
     }
@@ -154,12 +199,25 @@ export interface SaveOptions {
    * against it would destroy newer table rows.
    */
   source?: StateSource;
+  /**
+   * `app_state.updated_at` the caller last observed (GET response or a prior
+   * PUT response). When set and the stored value has moved, the save is
+   * rejected with `conflict` and nothing (blob or tables) is written.
+   */
+  base?: string;
 }
 
-export async function saveCloudState(db: DB, opts: SaveOptions = {}): Promise<boolean> {
+export interface SaveResult {
+  ok: boolean;
+  conflict?: boolean;
+  /** Current (or just-written) app_state.updated_at — caller's next base. */
+  updatedAt?: string;
+}
+
+export async function saveCloudState(db: DB, opts: SaveOptions = {}): Promise<SaveResult> {
   if (!inTablesMode()) {
     await warnIfTablesHaveData();
-    return saveBlob(db);
+    return saveBlob(db, opts.base);
   }
 
   const allowDelete = opts.source === "tables";
@@ -169,11 +227,12 @@ export async function saveCloudState(db: DB, opts: SaveOptions = {}): Promise<bo
         "upserting only; delete-sync skipped to protect the tables.",
     );
   }
-  const [blobOk, coreOk] = await Promise.all([
-    saveBlob(db),
-    repository.saveWorkspace(coreOf(db), { allowDelete }),
-  ]);
-  return blobOk && coreOk;
+  // Sequential on purpose: a stale blob write must abort before the tables
+  // are touched — delete-sync against a stale payload would drop newer rows.
+  const blob = await saveBlob(db, opts.base);
+  if (blob.conflict) return blob;
+  const coreOk = await repository.saveWorkspace(coreOf(db), { allowDelete });
+  return { ok: blob.ok && coreOk, updatedAt: blob.updatedAt };
 }
 
 export function isCloudConfigured(): boolean {

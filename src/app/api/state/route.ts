@@ -35,9 +35,20 @@ export async function PUT(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Missing db payload" }, { status: 400 });
   }
-  const ok = await saveCloudState(parsed.data.db, { source: parsed.data.source });
-  if (!ok) {
+  const result = await saveCloudState(parsed.data.db, {
+    source: parsed.data.source,
+    base: parsed.data.base,
+  });
+  if (result.conflict) {
+    // Another tab/device wrote after this client's last load — reject so the
+    // client can merge instead of clobbering. Nothing was written.
+    return NextResponse.json(
+      { error: "conflict", updatedAt: result.updatedAt ?? null },
+      { status: 409 },
+    );
+  }
+  if (!result.ok) {
     return NextResponse.json({ error: "Failed to save to Supabase" }, { status: 502 });
   }
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, updatedAt: result.updatedAt ?? null });
 }

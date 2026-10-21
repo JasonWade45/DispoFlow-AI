@@ -3,6 +3,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { AccessInfoEntry, DB, Property, BuyerProperty, Task, Session, User } from '@/types'
 import { cloudStateResponseSchema, storedSessionSchema } from '@/lib/schemas'
+import { mergeCloudConflict } from '@/lib/cloud-merge'
 import { createSeed } from './seed-work'
 import { uid } from './format'
 
@@ -26,6 +27,12 @@ let cloudSaveTimer: ReturnType<typeof setTimeout> | null = null
 // Provenance of `db`'s core collections: only a load that actually came from
 // the normalized tables may drive delete-sync on the next save.
 let cloudSource: 'tables' | 'blob' = 'blob'
+// app_state.updated_at we last observed (GET or a successful PUT). Sent as
+// `base` so the server can reject a stale write with 409 instead of letting
+// this tab clobber another tab/device's newer save.
+let cloudBase = ''
+// Consecutive 409s in one save chain; caps the merge-and-retry loop.
+let conflictRetries = 0
 
 function migrateV1toV2(parsed: Partial<DB> & Record<string, unknown>): DB {
   const base = createSeed()
@@ -186,6 +193,9 @@ async function syncFromCloud(): Promise<void> {
     const data = parsed.data
     if (!data.configured || !data.found || !data.db) return
     const cloudAt = data.updatedAt || ''
+    // Always re-anchor the save base — even when we keep the local copy —
+    // otherwise the next PUT would be rejected as stale by our own server.
+    cloudBase = cloudAt
     // Only adopt the cloud copy when it is strictly newer than what we last
     // saved locally; otherwise keep local (it may hold unsynced edits).
     if (cloudAt && localSavedAt && cloudAt <= localSavedAt) return
@@ -206,8 +216,9 @@ async function syncFromCloud(): Promise<void> {
   }
 }
 
-function scheduleCloudSave(): void {
+function scheduleCloudSave(isRetry = false): void {
   if (suppressCloudSave || typeof window === 'undefined') return
+  if (!isRetry) conflictRetries = 0
   if (cloudSaveTimer) clearTimeout(cloudSaveTimer)
   cloudSaveTimer = setTimeout(() => {
     cloudSaveTimer = null
@@ -216,9 +227,16 @@ function scheduleCloudSave(): void {
         const res = await fetch('/api/state', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ db, source: cloudSource }),
+          body: JSON.stringify({ db, source: cloudSource, base: cloudBase || undefined }),
         })
+        if (res.status === 409) {
+          await resolveConflict()
+          return
+        }
         if (res.ok) {
+          conflictRetries = 0
+          const payload = (await res.json().catch(() => null)) as { updatedAt?: string | null } | null
+          if (payload?.updatedAt) cloudBase = payload.updatedAt
           localSavedAt = new Date().toISOString()
           try {
             window.localStorage.setItem(SAVED_AT_KEY, localSavedAt)
@@ -231,6 +249,52 @@ function scheduleCloudSave(): void {
       }
     })()
   }, 1500)
+}
+
+// The server rejected our write because someone (another tab, another device,
+// the cron job) saved after our last load. Fetch their copy, merge it with
+// ours per entity (newer updatedAt wins), re-anchor the base and retry.
+async function resolveConflict(): Promise<void> {
+  if (conflictRetries >= 2) {
+    // Merge budget exhausted (pathological conflict loop): just re-anchor so
+    // the next user edit passes the staleness check, and stop retrying now.
+    conflictRetries = 0
+    try {
+      const res = await fetch('/api/state')
+      if (res.ok) {
+        const parsed = cloudStateResponseSchema.safeParse(await res.json())
+        if (parsed.success && parsed.data.updatedAt) cloudBase = parsed.data.updatedAt
+      }
+    } catch {
+      // offline — base stays; next load re-anchors
+    }
+    return
+  }
+  conflictRetries += 1
+  try {
+    const res = await fetch('/api/state')
+    if (!res.ok) return
+    const parsed = cloudStateResponseSchema.safeParse(await res.json())
+    if (!parsed.success) return
+    const data = parsed.data
+    if (!data.configured || !data.found || !data.db || !data.updatedAt) return
+    db = mergeCloudConflict(db, normalizeCloudDb(data.db))
+    cloudBase = data.updatedAt
+    cloudSource = data.source === 'tables' ? 'tables' : 'blob'
+    localSavedAt = data.updatedAt
+    try {
+      window.localStorage.setItem(DB_KEY, JSON.stringify(db))
+      window.localStorage.setItem(SAVED_AT_KEY, localSavedAt)
+    } catch {
+      // storage full — in-memory copy is still updated
+    }
+    suppressCloudSave = true
+    emit()
+    suppressCloudSave = false
+    scheduleCloudSave(true)
+  } catch {
+    // offline — nothing to merge; next successful emit retries
+  }
 }
 
 const listeners = new Set<() => void>()

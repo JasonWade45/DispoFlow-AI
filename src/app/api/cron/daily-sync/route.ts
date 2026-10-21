@@ -42,8 +42,21 @@ export async function GET(request: NextRequest) {
     const payload = await fetchDgPayload(token, locationId);
     const { db: nextDb, result } = await runDailySync(db, payload, userId, now, { maxDrafts: 20 });
 
-    const saved = await saveCloudState(nextDb, { source: state?.source });
-    return NextResponse.json({ ok: true, saved, result });
+    const saved = await saveCloudState(nextDb, { source: state?.source, base: state?.updatedAt });
+    if (saved.conflict) {
+      // A human wrote between this run's load and save. Skip rather than
+      // clobber their edits — the next run re-derives from fresh state.
+      console.warn(
+        "[cron] daily-sync save hit a write conflict — skipping this run; " +
+          "the next run will re-derive from the fresh state.",
+      );
+    }
+    return NextResponse.json({
+      ok: true,
+      saved: saved.ok,
+      conflict: Boolean(saved.conflict),
+      result,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Daily sync failed";
     console.error("Daily sync error:", error);

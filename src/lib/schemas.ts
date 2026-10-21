@@ -62,6 +62,10 @@ export const statePutSchema = z.object({
   // Which copy the client loaded (echoed from GET /api/state). Server-side
   // only used to decide whether delete-sync is safe; absent => no deletes.
   source: z.enum(["tables", "blob"]).optional(),
+  // app_state.updated_at the client last saw. When the stored value has moved
+  // (another tab/device wrote first), the server rejects with 409 instead of
+  // letting the stale payload clobber the newer one.
+  base: z.string().max(64).optional(),
 });
 
 export const groqChatResponseSchema = z.object({

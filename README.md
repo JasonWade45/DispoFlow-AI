@@ -82,7 +82,7 @@ An AI-powered real-estate dispositions CRM. It pulls motivated-seller leads from
 
 - **Next.js 16.4** (App Router, `cacheComponents`, Turbopack) + **React 19**
 - **TypeScript** + **Tailwind CSS 4**
-- **Vitest** + jsdom — **220 tests passing**
+- **Vitest** + jsdom — **231 tests passing**
 - **Supabase** (cloud state), **Groq** (AI), **Google OAuth** (Sheets), **GoHighLevel** (DispoGenius SMS), **Trello**, **Vercel** (hosting + cron)
 
 ## Getting started
@@ -120,6 +120,11 @@ SUPABASE_SERVICE_ROLE_KEY=...
 # App
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 CRON_SECRET=...
+
+# Optional: data-loss alerts (Slack/Discord incoming webhook). Posts a message
+# when a guarded collection drops >=50% on save or a blob-mode writer is
+# detected; rate-limited to one message per kind per 10 minutes.
+DATA_ALERT_WEBHOOK_URL=...
 ```
 
 > **Deploying to Vercel:** add the same variables in Project Settings → Environment Variables, set `NEXT_PUBLIC_APP_URL` to your production URL, authorize the production OAuth callback in Google Cloud Console, and put `CRON_SECRET` there too so the daily sync cron works. Publish the Google OAuth app to Production (Testing mode expires sessions after 7 days).
@@ -136,7 +141,8 @@ Integrity rules in `tables` mode:
 - Loads are **workspace-scoped** (`workspace_id`), so rows of other workspaces are never returned and never deleted.
 - Saves upsert first, then **delete-sync** the rows that are absent from the payload — but only when the payload actually came from a tables load (the client echoes the load's `source`); a blob-fallback payload only upserts, never deletes.
 - A row that fails to parse is logged, skipped, and protected from delete-sync instead of failing the whole load.
-- Saving to the blob while the tables still hold data logs an error (mixed-mode writer), and a save that drops a guarded collection (offers/properties/buyers/relationships/tasks) by ≥50% logs an alert; every `app_state` update is also snapshotted into `app_state_history` by migration 0002.
+- Saving to the blob while the tables still hold data logs an error (mixed-mode writer), and a save that drops a guarded collection (offers/properties/buyers/relationships/tasks) by ≥50% logs an alert; every `app_state` update is also snapshotted into `app_state_history` by migration 0002. Set `DATA_ALERT_WEBHOOK_URL` to also post those alerts to Slack/Discord.
+- Saves are **optimistic**: the client sends the `app_state.updated_at` it last saw (`base`); if another tab/device/cron wrote first, the server rejects with **409** and writes nothing. The client then merges per entity (newer `updatedAt` wins, ties keep the server copy) and retries — no more silent last-writer-wins overwrites. The daily-sync cron skips its save on conflict instead of clobbering a human edit.
 
 ### One-time migration runbook (Supabase SQL editor, in order)
 
@@ -187,7 +193,7 @@ src/
 npm test
 ```
 
-220 tests across 13 files cover sheet mapping/grouped-row sync, DispoGenius import/enrichment/relinking, the daily sync pipeline, AI follow-up generation, task actions, merging, overdue queues, scraping parsing, and the normalized-table repository (row mapping, workspace scoping, skip-on-parse-failure, delete-sync, save round-trips).
+231 tests across 15 files cover sheet mapping/grouped-row sync, DispoGenius import/enrichment/relinking, the daily sync pipeline, AI follow-up generation, task actions, merging, overdue queues, scraping parsing, the conflict merge (per-entity newer-wins), the alert webhook (delivery + cooldown), and the normalized-table repository (row mapping, workspace scoping, skip-on-parse-failure, delete-sync, save round-trips).
 
 ## Development notes
 
