@@ -59,6 +59,9 @@ export const statePutSchema = z.object({
     (v) => isObject(v) && Array.isArray((v as { properties?: unknown }).properties),
     { error: "Missing db payload" },
   ),
+  // Which copy the client loaded (echoed from GET /api/state). Server-side
+  // only used to decide whether delete-sync is safe; absent => no deletes.
+  source: z.enum(["tables", "blob"]).optional(),
 });
 
 export const groqChatResponseSchema = z.object({
@@ -184,4 +187,5 @@ export const cloudStateResponseSchema = z.object({
   found: z.boolean().optional(),
   db: z.record(z.string(), z.unknown()).optional(),
   updatedAt: z.string().optional(),
+  source: z.enum(["tables", "blob"]).optional(),
 });
