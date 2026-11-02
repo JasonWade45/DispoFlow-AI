@@ -158,7 +158,7 @@ async function executeElevateRegSync(
   }
 
   onProgress?.({ phase: "listing", done: 0, total: 0 })
-  const listRes = await fetch("/api/sync/elevatereg?pages=36")
+  const listRes = await fetch("/api/sync/elevatereg?pages=38")
   const listData = await listRes.json()
   if (!listRes.ok) throw new Error(listData.error || "Failed to fetch listing")
 

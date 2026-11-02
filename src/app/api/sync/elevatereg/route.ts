@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
   await connection()
   try {
     const { searchParams } = new URL(request.url)
-    const pages = Math.min(Number(searchParams.get('pages') ?? '36'), 36)
+    const pages = Math.min(Number(searchParams.get('pages') ?? '38'), 38)
 
     const cards = await scrapeElevateRegListings(pages)
 

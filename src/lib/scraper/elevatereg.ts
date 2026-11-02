@@ -193,7 +193,7 @@ function decodeEntities(s: string): string {
     .replace(/&#039;/g, "'")
 }
 
-export async function scrapeElevateRegListings(maxPages = 36): Promise<ListingCard[]> {
+export async function scrapeElevateRegListings(maxPages = 38): Promise<ListingCard[]> {
   const cards: ListingCard[] = []
   const seen = new Set<string>()
 

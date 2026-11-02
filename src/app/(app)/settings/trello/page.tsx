@@ -1,11 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDb, updateDb } from "@/lib/store";
 import type { Property, TrelloConnection } from "@/types";
 import { formatDate, parseMoney, uid } from "@/lib/format";
-import { parseAddressParts } from "@/lib/sync";
+import { normalizeAddress, parseAddressParts } from "@/lib/sync";
 import { addImportHistory } from "@/lib/actions";
+import {
+  applyTrelloSiteImport,
+  parseTrelloSiteImport,
+  type TrelloSiteImportCounts,
+  type TrelloSiteImportRow,
+} from "@/lib/trello-site-import";
 import {
   Badge,
   Button,
@@ -108,6 +114,11 @@ export default function TrelloPage() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ newCount: number; updatedCount: number; skippedCount: number } | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [siteRows, setSiteRows] = useState<TrelloSiteImportRow[] | null>(null);
+  const [siteParsing, setSiteParsing] = useState(false);
+  const [siteImporting, setSiteImporting] = useState(false);
+  const [siteError, setSiteError] = useState<string | null>(null);
+  const [siteResult, setSiteResult] = useState<TrelloSiteImportCounts | null>(null);
 
   const fetchBoards = useCallback(async () => {
     setError(null);
@@ -240,6 +251,48 @@ export default function TrelloPage() {
     });
   }
 
+  async function handleSiteFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setSiteParsing(true);
+    setSiteError(null);
+    setSiteResult(null);
+    try {
+      const text = await file.text();
+      setSiteRows(parseTrelloSiteImport(text));
+    } catch (err) {
+      setSiteRows(null);
+      setSiteError(err instanceof Error ? err.message : "Could not read the file.");
+    } finally {
+      setSiteParsing(false);
+    }
+  }
+
+  function handleSiteImport() {
+    if (!siteRows) return;
+    setSiteImporting(true);
+    setSiteError(null);
+    try {
+      const plan = applyTrelloSiteImport(db, siteRows, db.users[0]?.id ?? "u_owner");
+      updateDb(() => plan.db);
+      addImportHistory({
+        source: "trello",
+        newCount: plan.counts.created,
+        updatedCount: plan.counts.updated,
+        skippedCount: plan.counts.skipped,
+        errorCount: 0,
+        notes: `Trello export matched to elevatereg.com — ${siteRows.length} properties`,
+      });
+      setSiteResult(plan.counts);
+      setSiteRows(null);
+    } catch (err) {
+      setSiteError(err instanceof Error ? err.message : "Import failed.");
+    } finally {
+      setSiteImporting(false);
+    }
+  }
+
   async function handleImport() {
     setImporting(true);
     setError(null);
@@ -349,13 +402,27 @@ export default function TrelloPage() {
     }
   }
 
+  const existingAddrKeys = useMemo(
+    () => new Set(db.properties.map((p) => normalizeAddress(p.address))),
+    [db.properties],
+  );
+  const siteStatusCounts = useMemo(() => {
+    const acc: Record<string, number> = {};
+    for (const r of siteRows ?? []) acc[r.status] = (acc[r.status] || 0) + 1;
+    return acc;
+  }, [siteRows]);
+  const siteNewCount = useMemo(
+    () => (siteRows ?? []).filter((r) => !existingAddrKeys.has(normalizeAddress(r.address))).length,
+    [siteRows, existingAddrKeys],
+  );
+
   const previewRows = previewOpen ? buildPreview() : [];
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Trello Integration"
-        subtitle="Import properties from a Trello board — each card becomes a property."
+        subtitle="Import properties from a Trello board or a prepared export file — matched to your company website."
       />
 
       {connection?.isConnected && (
@@ -372,7 +439,110 @@ export default function TrelloPage() {
 
       <Card>
         <div className="border-b border-slate-100 px-4 py-3">
-          <h2 className="text-sm font-semibold text-slate-800">1. API credentials</h2>
+          <h2 className="text-sm font-semibold text-slate-800">
+            Import from a Trello export file — matched to elevatereg.com
+          </h2>
+          <p className="mt-0.5 text-xs text-slate-400">
+            Uses a prepared JSON export that contains only the Trello properties also listed on your
+            company website. No API key needed.
+          </p>
+        </div>
+        <div className="px-4 py-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+              <input
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={(e) => void handleSiteFile(e)}
+                disabled={siteParsing}
+              />
+              {siteParsing ? "Reading file…" : "Choose import file"}
+            </label>
+            <span className="text-xs text-slate-400">e.g. DispoFlow-Import.json</span>
+          </div>
+          {siteError && (
+            <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+              {siteError}
+            </p>
+          )}
+          {siteResult && (
+            <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              Imported {siteResult.created} new properties · {siteResult.updated} updated ·{" "}
+              {siteResult.skipped} skipped
+            </p>
+          )}
+        </div>
+      </Card>
+
+      {siteRows && (
+        <Card>
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-semibold text-slate-800">
+              Preview — {siteRows.length} properties from the company website
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-400">
+              {siteNewCount} new · {siteRows.length - siteNewCount} already in your database (they
+              will be updated, not duplicated).
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-1.5 px-4 py-3">
+            {Object.entries(siteStatusCounts).map(([status, count]) => (
+              <span
+                key={status}
+                className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600"
+              >
+                {status}: {count}
+              </span>
+            ))}
+          </div>
+          <div className="max-h-80 overflow-auto">
+            <table className="min-w-full text-xs">
+              <thead className="sticky top-0 bg-slate-50 text-left text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">#</th>
+                  <th className="px-3 py-2">Address</th>
+                  <th className="px-3 py-2">City</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Price</th>
+                  <th className="px-3 py-2">Trello list</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {siteRows.slice(0, 100).map((r, i) => (
+                  <tr key={`${r.trelloUrl || r.address}-${i}`}>
+                    <td className="px-3 py-2 text-slate-400">{i + 1}</td>
+                    <td className="px-3 py-2 font-medium text-slate-700">{r.address}</td>
+                    <td className="px-3 py-2 text-slate-500">{r.city}</td>
+                    <td className="px-3 py-2 text-slate-500">{r.status}</td>
+                    <td className="px-3 py-2 text-slate-500">
+                      {r.askingPrice ? `$${r.askingPrice.toLocaleString("en-US")}` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-slate-400">{r.trelloList}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {siteRows.length > 100 && (
+              <p className="px-3 py-2 text-xs text-slate-400">
+                …and {siteRows.length - 100} more
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-3 border-t border-slate-100 px-4 py-3">
+            <Button onClick={handleSiteImport} disabled={siteImporting}>
+              {siteImporting ? "Importing…" : `Import ${siteRows.length} properties`}
+            </Button>
+            <Button variant="secondary" onClick={() => setSiteRows(null)}>
+              Cancel
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      <Card>
+        <div className="border-b border-slate-100 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-800">2. API credentials</h2>
           <p className="mt-0.5 text-xs text-slate-400">
             Get your key at{" "}
             <a
@@ -418,7 +588,7 @@ export default function TrelloPage() {
       {credsSaved && (
         <Card>
           <div className="border-b border-slate-100 px-4 py-3">
-            <h2 className="text-sm font-semibold text-slate-800">2. Select board</h2>
+            <h2 className="text-sm font-semibold text-slate-800">3. Select board</h2>
             <p className="mt-0.5 text-xs text-slate-400">Pick the board that holds your properties.</p>
           </div>
           {loading && !boards.length ? (
@@ -453,7 +623,7 @@ export default function TrelloPage() {
       {selectedBoard && lists.length > 0 && (
         <Card>
           <div className="border-b border-slate-100 px-4 py-3">
-            <h2 className="text-sm font-semibold text-slate-800">3. Map pipeline stages</h2>
+            <h2 className="text-sm font-semibold text-slate-800">4. Map pipeline stages</h2>
             <p className="mt-0.5 text-xs text-slate-400">
               Match each Trello list (column) to a property status. {cards.length} cards found.
             </p>
