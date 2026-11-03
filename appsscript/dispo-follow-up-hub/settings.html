@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<style>
+  body { font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 13px; padding: 14px; }
+  h2 { font-size: 16px; margin: 0 0 10px; }
+  .group { margin-bottom: 12px; }
+  label { display: block; margin-bottom: 4px; font-size: 13px; color: #222; }
+  input { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 13px; }
+  button { background: #1a73e8; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  button.secondary { background: #f1f1f1; color: #333; margin-left: 8px; }
+  button.secondary:hover { background: #e2e2e2; }
+  #status { margin-top: 10px; font-size: 12px; min-height: 16px; }
+  .hint { font-size: 11.5px; color: #666; margin-top: 6px; line-height: 1.45; }
+  .masked { color: #444; }
+  .ok { color: #34a853; }
+  .err { color: #ea4335; }
+</style>
+</head>
+<body>
+<h2>DispoGenius Settings</h2>
+<div class="group">
+  <label>PIT API token</label>
+  <input type="password" id="token" placeholder="Paste your DispoGenius PIT token here">
+</div>
+<div class="group">
+  <label>Location ID (optional — auto-discovered from the token if left empty)</label>
+  <input id="locationId" placeholder="loc_... (e.g. loc_aB1cD2eF)">
+</div>
+<button id="save">Save</button>
+<button class="secondary" id="test">Test connection</button>
+<button class="secondary" id="close">Close</button>
+<div id="status"></div>
+<div class="hint">
+  Get your PIT token from DispoGenius (GoHighLevel / LeadConnector) &rarr; Settings &rarr; API tokens.<br>
+  The token is stored only in this spreadsheet's script properties (per user) — never in the sheet itself.<br>
+  Sending a follow-up upserts the buyer as a DispoGenius contact and sends an outbound SMS.
+</div>
+<script>
+  (function () {
+    var tokenEl = document.getElementById("token");
+    var locEl = document.getElementById("locationId");
+    var statusEl = document.getElementById("status");
+
+    function setStatus(msg, kind) {
+      statusEl.textContent = msg;
+      statusEl.className = kind === "err" ? "err" : kind === "ok" ? "ok" : "";
+    }
+
+    google.script.run
+      .withSuccessHandler(function (s) {
+        if (s.tokenSet) tokenEl.value = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (saved)";
+        if (s.locationId) locEl.value = s.locationId;
+      })
+      .withFailureHandler(function (e) {
+        setStatus("Could not load settings: " + e, "err");
+      })
+      .getSettings();
+
+    document.getElementById("save").onclick = function () {
+      var raw = tokenEl.value;
+      var token = raw && !raw.endsWith("(saved)") ? raw : "";
+      google.script.run
+        .withSuccessHandler(function () {
+          setStatus("Saved.", "ok");
+          tokenEl.value = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (saved)";
+        })
+        .withFailureHandler(function (e) {
+          setStatus("Save failed: " + e, "err");
+        })
+        .saveSettings(token, locEl.value);
+    };
+
+    document.getElementById("test").onclick = function () {
+      setStatus("Testing…", "");
+      google.script.run
+        .withSuccessHandler(function (r) {
+          setStatus("Connection OK — location: " + r.locationId, "ok");
+        })
+        .withFailureHandler(function (e) {
+          setStatus("Failed: " + e, "err");
+        })
+        .testConnection();
+    };
+
+    document.getElementById("close").onclick = function () {
+      google.script.host.close();
+    };
+  })();
+</script>
+</body>
+</html>

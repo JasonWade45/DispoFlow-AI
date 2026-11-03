@@ -51,6 +51,17 @@ An AI-powered real-estate dispositions CRM. It pulls motivated-seller leads from
 ### 6. ElevateReg scraper
 - Property scraping (beds/baths/sqft/comps) with sync that updates existing properties instead of duplicating.
 
+## Dispo Follow-Up Hub (Google Apps Script + DispoGenius API)
+
+A companion Google Apps Script project (`appsscript/dispo-follow-up-hub/`) bound to your Dispo Sheet:
+
+- **Reads only** the `Property Sheet` tab (one block per property, green header rows with address + code) and writes organized buyer data into **new tabs only** — `Buyer Hub` (one row per buyer × property, incl. an editable `Closing` field), `Buyers (Unique)` (deduplicated by phone/email), and the append-only `Follow-Up Log`. The source tab is never modified, deleted, re-sorted, or reformatted (enforced in code via `assertNotSourceTab`).
+- Parses free-text offers to a numeric column while keeping the original text, normalizes M/D/YYYY dates, and flags "Remove Me" buyers.
+- **Send Follow-up:** a sidebar with per-buyer "Send" buttons that upserts the buyer as a DispoGenius (GoHighLevel/LeadConnector) contact and sends the SMS via `POST /conversations/messages`, then logs the result and marks the hub row "Sent".
+- DispoGenius PIT token and Location ID are stored in script properties (per user), configured through a Settings sidebar.
+
+See `appsscript/dispo-follow-up-hub/README.md` for setup instructions.
+
 ---
 
 ## Key features built in this project

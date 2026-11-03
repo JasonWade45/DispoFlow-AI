@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<style>
+  body { font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 13px; padding: 12px; }
+  h2 { font-size: 16px; margin: 0 0 6px; letter-spacing: 0.2px; }
+  #status { color: #555; font-size: 12px; margin-bottom: 8px; min-height: 16px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+  th, td { border: 1px solid #d0d0d0; padding: 5px 7px; text-align: left; vertical-align: top; }
+  th { background: #f2f2f2; font-size: 12px; position: sticky; top: 0; z-index: 1; }
+  tr.sent td { background: #e2efda !important; }
+  .template { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 12px; }
+  button.send {
+    background: #1a73e8; color: #fff; border: none; padding: 4px 10px;
+    border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;
+  }
+  button.send:disabled { background: #9db2d2; cursor: not-allowed; }
+  button.send.sent { background: #34a853; }
+  button.send.sending { background: #fbbc04; color: #000; }
+  .hint { color: #666; font-size: 11px; margin-bottom: 8px; }
+  .empty { color: #999; font-style: italic; padding: 8px 0; }
+  .lbl { font-weight: 600; color: #222; }
+  .muted { color: #666; font-size: 11.5px; }
+  .badge { font-size: 10.5px; padding: 1px 6px; border-radius: 10px; color: #fff; font-weight: 600; }
+  .b-interested { background: #34a853; }
+  .b-undecided { background: #fbbc04; color: #000; }
+  .b-not-interested { background: #ea4335; }
+  .b-remove-me { background: #9aa0a6; }
+  .msg { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 12px; resize: vertical; }
+  .ok { color: #34a853; font-size: 11.5px; }
+  .err { color: #ea4335; font-size: 11.5px; }
+</style>
+</head>
+<body>
+<h2>Send Follow-Up</h2>
+<div id="status">Loading buyers…</div>
+<div class="hint">Message template — placeholders: {name} {property} {code} {offer} {closing}</div>
+<textarea id="template" class="template" rows="3">Hi {name}, this is Jason following up regarding {property}. Any update on your offer of {offer}?</textarea>
+<div id="list"></div>
+<script>
+  (function () {
+    var statusEl = document.getElementById("status");
+    var listEl = document.getElementById("list");
+    var templateEl = document.getElementById("template");
+    var rows = [];
+
+    function escapeHtml(s) {
+      return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+        return {
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        }[c];
+      });
+    }
+
+    function fillTemplate(tpl, row) {
+      return String(tpl)
+        .replace(/\{name\}/gi, escapeHtml(row.name || ""))
+        .replace(/\{property\}/gi, escapeHtml(row.propertyAddress || ""))
+        .replace(/\{code\}/gi, escapeHtml(row.propertyCode || ""))
+        .replace(/\{offer\}/gi, escapeHtml(row.offer || ""))
+        .replace(/\{closing\}/gi, escapeHtml(row.closing || ""));
+    }
+
+    function badgeClass(status) {
+      var s = String(status || "").toLowerCase().replace(/\s+/g, "-");
+      return "b-" + (s || "unknown");
+    }
+
+    function render() {
+      if (!rows.length) {
+        listEl.innerHTML =
+          '<div class="empty">No buyers available for follow-up (refresh the Buyer Hub first).</div>';
+        return;
+      }
+      var html =
+        '<table><thead><tr><th>Buyer</th><th>Phone</th><th>Property</th><th>Status</th><th>Offer</th><th>Closing</th><th>Message</th><th style="width:110px">Send</th></tr></thead><tbody>';
+      rows.forEach(function (row, idx) {
+        var msg = fillTemplate(templateEl.value, row);
+        html +=
+          '<tr id="row-' +
+          idx +
+          '">' +
+          '<td><span class="lbl">' +
+          escapeHtml(row.name || "(no name)") +
+          '</span><br><span class="muted">' +
+          escapeHtml(row.email || "") +
+          "</span></td>" +
+          '<td>' +
+          escapeHtml(row.phone) +
+          "</td>" +
+          '<td>' +
+          escapeHtml(row.propertyAddress || "") +
+          (row.propertyCode
+            ? ' <span class="muted">(' + escapeHtml(row.propertyCode) + ")</span>"
+            : "") +
+          "</td>" +
+          '<td><span class="badge ' +
+          badgeClass(row.status) +
+          '">' +
+          escapeHtml(row.status) +
+          "</span></td>" +
+          '<td>' +
+          escapeHtml(row.offer || "") +
+          "</td>" +
+          '<td>' +
+          escapeHtml(row.closing || "") +
+          "</td>" +
+          '<td><textarea class="msg" id="msg-' +
+          idx +
+          '" rows="2">' +
+          escapeHtml(msg) +
+          "</textarea></td>" +
+          '<td><button class="send" id="btn-' +
+          idx +
+          '" data-idx="' +
+          idx +
+          '">Send</button><div id="done-' +
+          idx +
+          '"></div></td>' +
+          "</tr>";
+      });
+      html += "</tbody></table>";
+      listEl.innerHTML = html;
+      rows.forEach(function (row, idx) {
+        document.getElementById("btn-" + idx).onclick = (function (i) {
+          return function () {
+            sendRow(i);
+          };
+        })(idx);
+      });
+    }
+
+    function sendRow(idx) {
+      var row = rows[idx];
+      var btn = document.getElementById("btn-" + idx);
+      var done = document.getElementById("done-" + idx);
+      var msg = document.getElementById("msg-" + idx).value;
+
+      btn.disabled = true;
+      btn.className = "send sending";
+      btn.textContent = "Sending…";
+      done.textContent = "";
+      done.className = "";
+
+      google.script.run
+        .withSuccessHandler(function (res) {
+          btn.textContent = "Sent \u2713";
+          btn.className = "send sent";
+          btn.disabled = true;
+          done.className = "ok";
+          done.textContent =
+            "Sent " +
+            res.timeLabel +
+            (res.messageId ? " (msg " + escapeHtml(res.messageId) + ")" : "");
+          document.getElementById("row-" + idx).classList.add("sent");
+          statusEl.textContent =
+            "Follow-up sent to " + escapeHtml(row.name || "buyer") + ".";
+        })
+        .withFailureHandler(function (err) {
+          btn.disabled = false;
+          btn.className = "send";
+          btn.textContent = "Send";
+          done.className = "err";
+          done.textContent = "Error: " + escapeHtml(String(err));
+          statusEl.textContent = "Send failed.";
+        })
+        .sendFollowUp({
+          buyerId: row.buyerId,
+          name: row.name,
+          phone: row.phone,
+          email: row.email,
+          propertyAddress: row.propertyAddress,
+          propertyCode: row.propertyCode,
+          message: msg,
+        });
+    }
+
+    google.script.run
+      .withSuccessHandler(function (loaded) {
+        rows = loaded || [];
+        statusEl.textContent =
+          rows.length + " buyer(s) ready for follow-up.";
+        render();
+      })
+      .withFailureHandler(function (err) {
+        statusEl.textContent = "Error loading buyers: " + escapeHtml(String(err));
+      })
+      .getBuyersForSending();
+  })();
+</script>
+</body>
+</html>
