@@ -4,7 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { AccessInfoEntry, DB, Property, BuyerProperty, Task, Session, User } from '@/types'
 import { cloudStateResponseSchema, storedSessionSchema } from '@/lib/schemas'
 import { mergeCloudConflict } from '@/lib/cloud-merge'
-import { createSeed } from './seed-work'
+import { createDemoSeed, createSeed } from './seed-work'
 import { uid } from './format'
 
 const serverDb = createSeed()
@@ -146,6 +146,7 @@ function hydrate(): void {
   hydrated = true
   try {
     const rawDb = window.localStorage.getItem(DB_KEY)
+    let loaded = false
     if (rawDb) {
       const parsed = JSON.parse(rawDb)
       if (parsed && Array.isArray(parsed.properties)) {
@@ -157,6 +158,18 @@ function hydrate(): void {
         } else {
           db = migrateV2toV3(migrateV1toV2(parsed))
         }
+        loaded = true
+      }
+    }
+    // Fresh install with no saved data, or an empty database — load demo data
+    // so the UI isn't blank on first login.
+    if (!loaded || (db.properties.length === 0 && db.buyers.length === 0)) {
+      db = createDemoSeed()
+      // Persist demo data so subsequent loads keep it (until user imports sheet).
+      try {
+        window.localStorage.setItem(DB_KEY, JSON.stringify(db))
+      } catch {
+        // storage full — in-memory copy is still used
       }
     }
     localSavedAt = window.localStorage.getItem(SAVED_AT_KEY) || ''
