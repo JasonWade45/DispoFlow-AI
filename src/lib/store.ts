@@ -161,9 +161,16 @@ function hydrate(): void {
         loaded = true
       }
     }
-    // Fresh install with no saved data — load demo data so the UI isn't empty.
-    if (!loaded) {
+    // Fresh install with no saved data, or an empty database — load demo data
+    // so the UI isn't blank on first login.
+    if (!loaded || (db.properties.length === 0 && db.buyers.length === 0)) {
       db = createDemoSeed()
+      // Persist demo data so subsequent loads keep it (until user imports sheet).
+      try {
+        window.localStorage.setItem(DB_KEY, JSON.stringify(db))
+      } catch {
+        // storage full — in-memory copy is still used
+      }
     }
     localSavedAt = window.localStorage.getItem(SAVED_AT_KEY) || ''
     const rawSession = window.localStorage.getItem(SESSION_KEY)
