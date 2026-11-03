@@ -34,6 +34,8 @@ export interface FollowUpContext {
   tasks?: Task[];
   mode: FollowUpMode;
   variant: number;
+  /** Active alternatives to suggest when the main property is sold. */
+  similarProperties?: Property[];
 }
 
 export interface FollowUpDraft {
@@ -43,17 +45,56 @@ export interface FollowUpDraft {
   sources: string[];
   blockedReason: string | null;
   engine?: "ai" | "templates";
+  /** Data-quality note for human review before sending (missing fields, etc.). */
+  flag?: string | null;
 }
 
 export function blockedFollowUpReason(ctx: FollowUpContext): string | null {
   if (ctx.buyer.status === "Do Not Contact") {
     return "This buyer is marked Do Not Contact. No follow-up message will be suggested.";
   }
-  if (ctx.property.status === "Sold" || ctx.property.status === "Cancelled") {
-    return `Property status is ${ctx.property.status}. Review the status before sending any marketing follow-up.`;
+  // Buyers with no message history still get a draft: the overdue queue is full
+  // of them (only system events on record), and they are exactly who needs a
+  // first-touch message. Missing history is surfaced as a review flag instead.
+  return null;
+}
+
+/**
+ * Data-quality note when there is no back-and-forth with this buyer yet, so the
+ * draft is treated as a first touch rather than a continuation.
+ */
+export function noHistoryFlag(ctx: FollowUpContext): string | null {
+  const hasMessages = ctx.interactions.some((i) => i.direction === "in" || i.direction === "out");
+  if (hasMessages) return null;
+  return "No message history with this buyer yet — this reads as a first touch. Review the wording before sending.";
+}
+
+const PRICE_WORDS = ["price", "cost", "how much", "asking", "$"];
+
+/**
+ * Deterministic data-quality check: the buyer asked about something the
+ * property record does not have. Returns a note to flag for human review.
+ */
+export function missingDataFlag(ctx: FollowUpContext): string | null {
+  const p = ctx.property;
+  const question = (lastBuyerQuestion(ctx.interactions) ?? "").toLowerCase();
+
+  const checks: Array<{ asked: boolean; present: boolean; field: string }> = [
+    {
+      asked: PRICE_WORDS.some((w) => question.includes(w)),
+      present: p.askingPrice != null,
+      field: "asking price",
+    },
+    { asked: question.includes("sqft") || question.includes("square feet"), present: p.sqft !== "", field: "square footage" },
+    { asked: /\bbed/.test(question), present: p.bedrooms !== "", field: "bedroom count" },
+    { asked: /\bbath/.test(question), present: p.bathrooms !== "", field: "bathroom count" },
+  ];
+  const missing = checks.find((c) => c.asked && !c.present);
+  if (missing) {
+    return `The buyer asked about ${missing.field} but it is missing from the property data — confirm before sending.`;
   }
-  if (ctx.interactions.length === 0) {
-    return "No conversation history for this buyer on this property yet — log an interaction first.";
+  if (mentionsPriceConcern(ctx.interactions) && p.askingPrice == null) {
+    return "The buyer raised price but the property has no asking price on file — verify details before sending.";
   }
   return null;
 }
@@ -185,6 +226,40 @@ function buildBody(
   const priceConcern = mentionsPriceConcern(interactions);
   const wantsPartner = mentionsPartner(interactions);
   const v = bodyIdx;
+
+  if (property.status === "Sold" || property.status === "Cancelled") {
+    const isSold = property.status === "Sold";
+    const goneLine = isSold
+      ? `${property.address} is sold`
+      : `${property.address} is off the market`;
+    const alts = (ctx.similarProperties ?? [])
+      .filter((p) => p.status !== "Sold" && p.status !== "Cancelled")
+      .slice(0, 3);
+    const list = alts
+      .map((p) => `${p.address}${p.askingPrice != null ? ` (${formatMoney(p.askingPrice)})` : ""}`)
+      .join(", ");
+    const market = buyer.preferredMarkets[0] ?? "your markets";
+    const bodies = alts.length > 0
+      ? [
+          `${goneLine} — but I've got similar ones still available: ${list}. Want the details on any of them?`,
+          `${goneLine}. If you liked that one, these are still available: ${list}. Interested in any?`,
+          `${goneLine}. Similar ones I do have: ${list} — want me to send info on any of them?`,
+        ]
+      : [
+          `${goneLine}. Are you still looking? I can send what's still available in ${market}.`,
+          `${goneLine}. Want me to keep you posted when something similar hits the market?`,
+          `${goneLine}. Tell me what you're hunting for and I'll send matches.`,
+        ];
+    return {
+      text: bodies[v % bodies.length],
+      why: `${isSold ? "Sold" : "Cancelled"} status — told the buyer straight instead of marketing a dead deal${
+        alts.length > 0
+          ? `, and offered ${alts.length} similar available propert${alts.length === 1 ? "y" : "ies"}`
+          : ", and offered to share what's still available"
+      }.`,
+      usesConversation: false,
+    };
+  }
 
   switch (mode) {
     case "Price Objection Follow-Up": {
@@ -424,6 +499,16 @@ function buildMessage(ctx: FollowUpContext): { message: string; why: string; sou
   if (ctx.property.expectedClosingDate) {
     sources.push(`Property status: ${ctx.property.status}, expected closing ${ctx.property.expectedClosingDate}`);
   }
+  if (ctx.property.status === "Sold" || ctx.property.status === "Cancelled") {
+    const alts = (ctx.similarProperties ?? [])
+      .filter((p) => p.status !== "Sold" && p.status !== "Cancelled")
+      .slice(0, 3);
+    sources.push(
+      alts.length > 0
+        ? `Property status: ${ctx.property.status} — suggested similar available: ${alts.map((p) => p.address).join(", ")}`
+        : `Property status: ${ctx.property.status} — no similar available properties to suggest`,
+    );
+  }
   if (used.size > 0) {
     sources.push(`Checked ${used.size} previously sent/scheduled message(s) to avoid repetition`);
   }
@@ -469,11 +554,20 @@ export async function generateFollowUp(ctx: FollowUpContext): Promise<FollowUpDr
       sources: [],
       blockedReason: blocked,
       engine: "templates",
+      flag: null,
     };
   }
 
   const { message, why, sources } = buildMessage(ctx);
-  return { message, mode: ctx.mode, why, sources, blockedReason: null, engine: "templates" };
+  return {
+    message,
+    mode: ctx.mode,
+    why,
+    sources,
+    blockedReason: null,
+    engine: "templates",
+    flag: missingDataFlag(ctx) ?? noHistoryFlag(ctx),
+  };
 }
 
 export async function refineFollowUp(

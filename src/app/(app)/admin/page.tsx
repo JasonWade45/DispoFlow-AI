@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import type { Settings, User } from "@/types";
-import { updateDb, useDb, useSession } from "@/lib/store";
+import { setSession, updateDb, useDb, useSession } from "@/lib/store";
 import { userById } from "@/lib/selectors";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { autoMergeDuplicates, duplicateOverview } from "@/lib/merge";
-import { Badge, Button, Card, EmptyState, PageHeader, Select } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Input, PageHeader, Select } from "@/components/ui";
 
 interface PendingInvitation {
   email: string;
@@ -23,6 +23,8 @@ export default function AdminPage() {
   const session = useSession();
   const [error, setError] = useState("");
   const [mergeMsg, setMergeMsg] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [nameDraft, setNameDraft] = useState("");
 
   const me = db.users.find((u) => u.id === session.userId) ?? null;
 
@@ -56,6 +58,33 @@ export default function AdminPage() {
       d.users = d.users.map((u) => (u.id === user.id ? { ...u, role: role as User["role"] } : u));
       return d;
     });
+  }
+
+  function startRename(user: User) {
+    setError("");
+    setEditingId(user.id);
+    setNameDraft(user.name);
+  }
+
+  function saveRename(user: User) {
+    const next = nameDraft.trim();
+    if (!next || next === user.name) {
+      setEditingId(null);
+      return;
+    }
+    if (next.length < 2) {
+      setError("Name must be at least 2 characters.");
+      return;
+    }
+    setError("");
+    const updated: User = { ...user, name: next };
+    updateDb((d) => {
+      d.users = d.users.map((u) => (u.id === user.id ? updated : u));
+      return d;
+    });
+    // Keep the signed-in session in sync so the sidebar updates right away.
+    if (session.userId === user.id) setSession(user.id, updated);
+    setEditingId(null);
   }
 
   const ext = db.settings as ExtSettings;
@@ -108,7 +137,7 @@ export default function AdminPage() {
           <div className="border-b border-slate-100 px-4 py-3">
             <h2 className="text-sm font-semibold text-slate-800">Users</h2>
             <p className="mt-0.5 text-xs text-slate-400">
-              Toggle access or change roles. You can&apos;t modify your own account.
+              Rename anyone (including you), toggle access, or change roles.
             </p>
           </div>
           <div className="overflow-x-auto">
@@ -126,10 +155,44 @@ export default function AdminPage() {
                 {db.users.map((u) => {
                   const isSelf = u.id === me.id;
                   return (
-                    <tr key={u.id}>
+                    <tr key={u.id} className="group">
                       <td className="px-4 py-2.5">
-                        <span className="font-medium text-slate-800">{u.name}</span>
-                        {isSelf && <span className="ml-1.5 text-[11px] text-slate-400">(you)</span>}
+                        {editingId === u.id ? (
+                          <div className="flex items-center gap-1.5">
+                            <Input
+                              value={nameDraft}
+                              onChange={(e) => setNameDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") saveRename(u);
+                                if (e.key === "Escape") setEditingId(null);
+                              }}
+                              autoFocus
+                              aria-label={`New name for ${u.name}`}
+                              className="h-8 w-40"
+                            />
+                            <Button size="sm" onClick={() => saveRename(u)}>
+                              Save
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium text-slate-800">{u.name}</span>
+                            {isSelf && <span className="text-[11px] text-slate-400">(you)</span>}
+                            <button
+                              onClick={() => startRename(u)}
+                              title="Rename"
+                              aria-label={`Rename ${u.name}`}
+                              className="rounded p-1 text-slate-300 opacity-0 transition hover:bg-slate-100 hover:text-slate-600 focus:opacity-100 group-hover:opacity-100"
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                <path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+                              </svg>
+                            </button>
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-2.5 text-slate-500">{u.email}</td>
                       <td className="px-4 py-2.5">

@@ -139,8 +139,11 @@ describe("buildGroqSystemPrompt", () => {
     const s = buildGroqSystemPrompt();
     expect(s).toMatch(/NEVER invent/);
     expect(s).toMatch(/MESSAGES ALREADY SENT/);
-    expect(s).toMatch(/\{"message": "\.\.\.", "why": "\.\.\."\}/);
+    expect(s).toMatch(/\{"message": "\.\.\.", "why": "\.\.\.", "flag": "\.\.\."\}/);
     expect(s).toMatch(/under 320 characters/);
+    expect(s).toMatch(/PROPERTY STATUS is authoritative/);
+    expect(s).toMatch(/never present it as available/);
+    expect(s).toMatch(/never invent it/);
   });
 });
 
@@ -179,6 +182,37 @@ describe("buildGroqUserPrompt", () => {
     const b = buildGroqUserPrompt(input({ variant: 3 }));
     expect(a).toContain("VARIANT SEED: 0");
     expect(b).toContain("VARIANT SEED: 3");
+  });
+
+  it("names the last speaker", () => {
+    const p = buildGroqUserPrompt(input());
+    expect(p).toContain("LAST SPEAKER: US");
+  });
+
+  it("flags a sold property and offers similar available properties", () => {
+    const sold: Property = { ...property, status: "Sold" };
+    const alt: Property = {
+      ...property,
+      id: "p2",
+      address: "22 Oak Ave",
+      status: "Available",
+      askingPrice: 165000,
+      bedrooms: "3",
+      bathrooms: "2",
+      sqft: "1500",
+    };
+    const p = buildGroqUserPrompt(input({ property: sold, similarProperties: [alt] }));
+    expect(p).toContain("is SOLD");
+    expect(p).toContain("Do not present it as available");
+    expect(p).toContain("SIMILAR AVAILABLE PROPERTIES (offer these instead):");
+    expect(p).toContain("22 Oak Ave");
+    expect(p).toContain("$165,000");
+  });
+
+  it("tells the model when the property is not sold so it stays on the status line only", () => {
+    const p = buildGroqUserPrompt(input());
+    expect(p).toContain("Property status: Available");
+    expect(p).not.toContain("Do not present it as available");
   });
 });
 

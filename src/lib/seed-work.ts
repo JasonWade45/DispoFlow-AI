@@ -2,7 +2,7 @@ import type { DB, Settings, User } from "@/types";
 import { ORG_ID, ts } from "./seed-core";
 
 export const seedUsers: User[] = [
-  { id: "u_owner", orgId: ORG_ID, name: "Dana Whitfield", email: "owner@dispoflow.demo", role: "owner", active: true },
+  { id: "u_owner", orgId: ORG_ID, name: "Jason Wade", email: "owner@dispoflow.demo", role: "owner", active: true },
   { id: "u_sarah", orgId: ORG_ID, name: "Sarah Mendez", email: "sarah@dispoflow.demo", role: "team", active: true },
   { id: "u_marcus", orgId: ORG_ID, name: "Marcus Reed", email: "marcus@dispoflow.demo", role: "team", active: true },
   { id: "u_tom", orgId: ORG_ID, name: "Tom Alvarez", email: "tom@dispoflow.demo", role: "team", active: true },

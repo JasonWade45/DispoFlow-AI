@@ -42,19 +42,23 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
-      <div className="w-full max-w-md">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-4 py-10">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(65%_55%_at_50%_-10%,rgba(99,102,241,0.22),transparent_70%)]"
+      />
+      <div className="relative w-full max-w-md">
         <div className="mb-6 flex flex-col items-center text-center">
-          <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 text-base font-bold text-white">
+          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-base font-bold text-white shadow-lg shadow-indigo-950/40">
             D
           </div>
-          <h1 className="text-lg font-semibold text-slate-900">DispoFlow AI</h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <h1 className="text-lg font-semibold tracking-tight text-white">DispoFlow AI</h1>
+          <p className="mt-1 text-sm text-slate-400">
             Disposition & buyer follow-up management
           </p>
         </div>
 
-        <Card className="p-6">
+        <Card className="p-6 shadow-2xl">
           <form onSubmit={handleSubmit} className="space-y-4">
             <Field label="Email">
               <Input
@@ -88,7 +92,7 @@ export default function LoginPage() {
             <p className="mb-2 text-xs font-medium text-slate-500">Demo accounts</p>
             <div className="space-y-1.5">
               {[
-                { email: 'owner@dispoflow.demo', label: 'Dana Whitfield — Owner / Admin' },
+                { email: 'owner@dispoflow.demo', label: 'Jason Wade — Owner / Admin' },
                 { email: 'sarah@dispoflow.demo', label: 'Sarah Mendez — Team Member' },
                 { email: 'marcus@dispoflow.demo', label: 'Marcus Reed — Team Member' },
               ].map((h) => (
@@ -97,10 +101,10 @@ export default function LoginPage() {
                   type="button"
                   onClick={() => { setEmail(h.email); setPassword('demo1234'); setError(''); }}
                   disabled={loading}
-                  className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-left text-xs text-slate-600 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"
+                  className="group flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"
                 >
                   <span>{h.label}</span>
-                  <span className="text-slate-400">Use</span>
+                  <span className="font-medium text-slate-400 transition group-hover:text-slate-600">Use →</span>
                 </button>
               ))}
             </div>

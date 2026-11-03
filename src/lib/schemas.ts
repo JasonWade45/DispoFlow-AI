@@ -28,6 +28,7 @@ export const followUpRequestSchema = z.object({
   interactions: list<Interaction[]>("must be an array"),
   offers: list<Offer[]>("must be an array"),
   tasks: list<Task[]>("must be an array").optional(),
+  similarProperties: list<Property[]>("must be an array").optional(),
   mode: z.custom<FollowUpMode>(
     (v) => typeof v === "string" && (FOLLOW_UP_MODES as string[]).includes(v),
     { error: "unknown follow-up mode" },
@@ -75,6 +76,7 @@ export const groqChatResponseSchema = z.object({
 export const followUpDraftResponseSchema = z.object({
   message: z.string(),
   why: z.string().optional(),
+  flag: z.string().optional(),
 });
 
 export const columnMapResponseSchema = z.object({

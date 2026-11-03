@@ -5,6 +5,8 @@ import {
   blockedFollowUpReason,
   generateFollowUp,
   messageFingerprint,
+  missingDataFlag,
+  noHistoryFlag,
   usedMessageFingerprints,
   type FollowUpContext,
   type FollowUpDraft,
@@ -73,6 +75,7 @@ export interface GroqPromptInput {
   variant: number;
   currentMessage?: string | null;
   refine?: RefineAction | null;
+  similarProperties?: Property[];
 }
 
 export function buildGroqSystemPrompt(): string {
@@ -82,10 +85,12 @@ export function buildGroqSystemPrompt(): string {
     "- 1 to 3 sentences, under 320 characters, plain text, no emojis, no hashtags, no placeholders.",
     "- Ground every claim in the provided data. NEVER invent prices, dates, repair costs, comps, or commitments.",
     "- Only mention dollar amounts that appear exactly in the provided offer or asking-price fields.",
+    "- PROPERTY STATUS is authoritative: if it says Sold or Cancelled, say the property is gone and offer the SIMILAR AVAILABLE PROPERTIES when listed — never present it as available.",
+    "- If the buyer asked about a detail that is NOT in the provided data, say you will confirm it — never invent it — and set \"flag\" to a short note about what is missing. Use \"flag\": \"\" when nothing is missing.",
     "- If the buyer asked a question last, answer it (or address why you can't yet) before anything else.",
     "- Do NOT repeat or closely rephrase any message listed under MESSAGES ALREADY SENT — bring a fresh angle.",
     "- Sound like a real person: contractions, natural rhythm, zero corporate filler.",
-    '- Output JSON only: {"message": "...", "why": "..."} where "why" is one sentence explaining the angle you took.',
+    '- Output JSON only: {"message": "...", "why": "...", "flag": "..."} where "why" is one sentence explaining the angle you took.',
   ].join("\n");
 }
 
@@ -99,6 +104,12 @@ export function buildGroqUserPrompt(input: GroqPromptInput): string {
 
   const used = [...usedMessageFingerprints(interactions)];
   const lastOutbound = interactions.find((i) => i.direction === "out");
+  const sortedAsc = [...interactions].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
+  const lastMessage = sortedAsc[sortedAsc.length - 1];
+  const gone = property.status === "Sold" || property.status === "Cancelled";
+  const alts = (input.similarProperties ?? [])
+    .filter((p) => p.status !== "Sold" && p.status !== "Cancelled")
+    .slice(0, 3);
 
   const lines: string[] = [];
   lines.push(`MODE: ${mode}`);
@@ -116,11 +127,31 @@ export function buildGroqUserPrompt(input: GroqPromptInput): string {
   if (property.askingPrice != null) lines.push(`- Asking price: ${formatMoney(property.askingPrice)}`);
   if (property.arv != null) lines.push(`- ARV: ${formatMoney(property.arv)}`);
   lines.push(`- Property status: ${property.status}`);
+  if (gone) {
+    lines.push(
+      `- IMPORTANT: ${property.address} is ${property.status === "Sold" ? "SOLD" : "OFF THE MARKET (cancelled)"}. Do not present it as available.`,
+    );
+  }
+  if (gone && alts.length > 0) {
+    lines.push("SIMILAR AVAILABLE PROPERTIES (offer these instead):");
+    for (const p of alts) {
+      const specs = [
+        p.bedrooms && p.bathrooms ? `${p.bedrooms} bd ${p.bathrooms} ba` : "",
+        p.sqft ? `${p.sqft} sqft` : "",
+        p.askingPrice != null ? `asking ${formatMoney(p.askingPrice)}` : "",
+      ].filter(Boolean);
+      lines.push(`- ${p.address}, ${p.city} ${p.state}${specs.length ? ` — ${specs.join(", ")}` : ""}`);
+    }
+  }
   for (const o of confirmed) {
     lines.push(`- Confirmed offer: ${formatMoney(o.amount)} (${o.status}, ${o.offerDate})${o.terms ? ` — terms: ${o.terms.slice(0, 120)}` : ""}`);
   }
   if (lastOutbound) {
-    lines.push(`- Last we heard from them: ${relativeTime(lastOutbound.occurredAt)}`);
+    lines.push(`- Last message we sent: ${relativeTime(lastOutbound.occurredAt)}`);
+  }
+  if (lastMessage) {
+    const who = lastMessage.direction === "in" ? "BUYER" : lastMessage.direction === "out" ? "US" : "NOTE";
+    lines.push(`- LAST SPEAKER: ${who} (${relativeTime(lastMessage.occurredAt)})`);
   }
   lines.push("");
   lines.push("CONVERSATION TRANSCRIPT (oldest first):");
@@ -176,7 +207,7 @@ export async function callGroq(system: string, user: string, temperature: number
   throw lastError instanceof Error ? lastError : new Error("Groq request failed");
 }
 
-function parseDraft(content: string): { message: string; why: string } {
+function parseDraft(content: string): { message: string; why: string; flag?: string } {
   const fallbackWhy = "AI-drafted from the conversation history.";
   let raw: unknown;
   try {
@@ -191,6 +222,7 @@ function parseDraft(content: string): { message: string; why: string } {
   return {
     message: parsed.data.message.trim(),
     why: parsed.data.why?.trim() || fallbackWhy,
+    flag: parsed.data.flag?.trim() || undefined,
   };
 }
 
@@ -204,6 +236,16 @@ function buildSources(ctx: FollowUpContext): string[] {
   if (lastOut) {
     sources.push(`Last message we sent (${relativeTime(lastOut.occurredAt)}) — will not repeat`);
   }
+  if (ctx.property.status === "Sold" || ctx.property.status === "Cancelled") {
+    const alts = (ctx.similarProperties ?? [])
+      .filter((p) => p.status !== "Sold" && p.status !== "Cancelled")
+      .slice(0, 3);
+    sources.push(
+      alts.length > 0
+        ? `Property status: ${ctx.property.status} — suggested similar available: ${alts.map((p) => p.address).join(", ")}`
+        : `Property status: ${ctx.property.status} — no similar available properties to suggest`,
+    );
+  }
   sources.push(`Groq AI (${MODELS[0]}) drafted from the full transcript.`);
   return sources;
 }
@@ -214,7 +256,15 @@ export async function groqGenerateFollowUp(
 ): Promise<FollowUpDraft> {
   const blocked = blockedFollowUpReason(ctx);
   if (blocked) {
-    return { message: "", mode: ctx.mode, why: "", sources: [], blockedReason: blocked, engine: "ai" };
+    return {
+      message: "",
+      mode: ctx.mode,
+      why: "",
+      sources: [],
+      blockedReason: blocked,
+      engine: "ai",
+      flag: null,
+    };
   }
 
   const system = buildGroqSystemPrompt();
@@ -227,6 +277,7 @@ export async function groqGenerateFollowUp(
     variant: ctx.variant,
     currentMessage: opts.currentMessage ?? null,
     refine: opts.refine ?? null,
+    similarProperties: ctx.similarProperties,
   });
 
   const used = usedMessageFingerprints(ctx.interactions, ctx.tasks ?? []);
@@ -239,7 +290,7 @@ export async function groqGenerateFollowUp(
         ? baseUser
         : `${baseUser}\n\nYour previous attempt was rejected for repeating a prior message:\n"${lastAttempt.slice(0, 200)}"\nWrite a genuinely different message with a new opening and angle.`;
     const content = await callGroq(system, user, temperature);
-    const { message, why } = parseDraft(content);
+    const { message, why, flag } = parseDraft(content);
     if (!message) {
       lastAttempt = "";
       continue;
@@ -256,6 +307,7 @@ export async function groqGenerateFollowUp(
       sources: buildSources(ctx),
       blockedReason: null,
       engine: "ai",
+      flag: flag ?? missingDataFlag(ctx) ?? noHistoryFlag(ctx) ?? null,
     };
   }
 

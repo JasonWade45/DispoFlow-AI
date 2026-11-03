@@ -23,11 +23,11 @@ export function Button({
   title?: string;
 }) {
   const variants: Record<string, string> = {
-    primary: "bg-slate-900 text-white hover:bg-slate-700 disabled:bg-slate-400",
-    secondary: "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 disabled:text-slate-400",
+    primary: "bg-slate-900 text-white shadow-sm hover:bg-slate-800 disabled:bg-slate-300 disabled:shadow-none",
+    secondary: "bg-white text-slate-700 border border-slate-300 shadow-sm hover:border-slate-400 hover:bg-slate-50 disabled:text-slate-400 disabled:shadow-none",
     ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
     subtle: "bg-slate-100 text-slate-700 hover:bg-slate-200",
-    danger: "bg-rose-600 text-white hover:bg-rose-500 disabled:bg-rose-300",
+    danger: "bg-rose-600 text-white shadow-sm hover:bg-rose-500 disabled:bg-rose-300 disabled:shadow-none",
   };
   const sizes: Record<string, string> = {
     sm: "h-8 px-3 text-xs",
@@ -41,7 +41,7 @@ export function Button({
       disabled={disabled}
       onClick={onClick}
       className={cx(
-        "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:cursor-not-allowed",
+        "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:active:scale-100",
         variants[variant],
         sizes[size],
         className,
@@ -120,7 +120,7 @@ export function Badge({ label, className }: { label: string; className?: string 
   return (
     <span
       className={cx(
-        "inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+        "inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-wide ring-1 ring-inset",
         statusTone(label),
         className,
       )}
@@ -138,7 +138,12 @@ export function Card({
   className?: string;
 }) {
   return (
-    <div className={cx("rounded-xl border border-slate-200 bg-white shadow-sm", className)}>
+    <div
+      className={cx(
+        "rounded-xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_1px_3px_rgba(15,23,42,0.03)]",
+        className,
+      )}
+    >
       {children}
     </div>
   );
@@ -179,13 +184,17 @@ export function Modal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-6">
-      <div className="fixed inset-0 bg-slate-900/40" onClick={onClose} aria-hidden />
+      <div
+        className="fixed inset-0 animate-fade-in bg-slate-900/50 backdrop-blur-[2px]"
+        onClick={onClose}
+        aria-hidden
+      />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
         className={cx(
-          "relative z-10 my-8 w-full rounded-xl bg-white shadow-xl ring-1 ring-slate-200",
+          "relative z-10 my-8 w-full animate-modal-in rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/5",
           sizes[size],
         )}
       >
@@ -236,7 +245,7 @@ export function Field({
 }
 
 const controlClass =
-  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200";
+  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-[0_1px_2px_rgba(15,23,42,0.03)] transition placeholder:text-slate-400 hover:border-slate-400 focus:border-slate-500 focus:outline-none focus:ring-4 focus:ring-slate-100";
 
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cx(controlClass, props.className)} />;
@@ -247,7 +256,7 @@ export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement
 }
 
 export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select {...props} className={cx(controlClass, "appearance-none pr-8", props.className)} />;
+  return <select {...props} className={cx(controlClass, "select-chevron", props.className)} />;
 }
 
 export function Tabs({
@@ -266,9 +275,9 @@ export function Tabs({
           key={t}
           onClick={() => onChange(t)}
           className={cx(
-            "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+            "rounded-md px-3 py-1.5 text-xs font-medium transition",
             active === t
-              ? "bg-white text-slate-900 shadow-sm"
+              ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/70"
               : "text-slate-500 hover:text-slate-700",
           )}
         >
@@ -290,7 +299,7 @@ export function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 px-6 py-14 text-center">
-      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-b from-slate-100 to-slate-50 text-slate-400 ring-1 ring-slate-200/80">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
           <path d="M3 7h18M3 12h18M3 17h10" />
         </svg>
@@ -314,8 +323,8 @@ export function PageHeader({
   return (
     <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight text-slate-900">{title}</h1>
-        {subtitle && <p className="mt-0.5 text-sm text-slate-500">{subtitle}</p>}
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{title}</h1>
+        {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>

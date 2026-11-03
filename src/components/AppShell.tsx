@@ -45,19 +45,19 @@ export default function AppShell({
   return (
     <div className="flex min-h-screen bg-slate-50">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-slate-200 bg-white lg:flex print:hidden">
-        <div className="flex h-14 items-center gap-2 border-b border-slate-100 px-4">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-900 text-xs font-bold text-white">
+        <div className="flex h-14 items-center gap-2.5 border-b border-slate-100 px-4">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-slate-900 to-slate-700 text-xs font-bold text-white shadow-sm">
             D
           </div>
           <div className="leading-tight">
-            <p className="text-sm font-semibold text-slate-900">DispoFlow AI</p>
+            <p className="text-sm font-semibold tracking-tight text-slate-900">DispoFlow AI</p>
             <p className="text-[11px] text-slate-400">{kpis.activeProperties} properties · {kpis.activeBuyers} buyers</p>
           </div>
         </div>
         <div className="flex flex-1 flex-col overflow-y-auto p-3">{nav()}</div>
         <div className="border-t border-slate-100 p-3">
           <div className="flex items-center gap-2 rounded-lg px-2 py-1.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-xs font-semibold text-white shadow-sm">
               {user.name.split(" ").map((n) => n[0]).slice(0, 2).join("")}
             </div>
             <div className="min-w-0 flex-1 leading-tight">
@@ -85,7 +85,7 @@ export default function AppShell({
           <div className="absolute inset-y-0 left-0 flex w-64 flex-col bg-white shadow-xl">
             <div className="flex h-14 items-center justify-between border-b border-slate-100 px-4">
               <div className="flex items-center gap-2">
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-900 text-xs font-bold text-white">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-slate-900 to-slate-700 text-xs font-bold text-white shadow-sm">
                   D
                 </div>
                 <p className="text-sm font-semibold text-slate-900">DispoFlow AI</p>
@@ -102,7 +102,7 @@ export default function AppShell({
       )}
 
       <div className="flex min-w-0 flex-1 flex-col lg:pl-60 print:pl-0!">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6 print:hidden">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-slate-200 bg-white/90 px-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] backdrop-blur sm:px-6 print:hidden">
           <button
             onClick={() => setMenuOpen(true)}
             className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 lg:hidden"
@@ -134,7 +134,7 @@ export default function AppShell({
               onClick={() => setUserMenu((v) => !v)}
               className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100"
             >
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-[11px] font-semibold text-indigo-700">
+              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-[11px] font-semibold text-white shadow-sm">
                 {user.name.split(" ").map((n) => n[0]).slice(0, 2).join("")}
               </div>
               <span className="hidden text-xs font-medium text-slate-700 sm:block">{isFirst(user.name)}</span>

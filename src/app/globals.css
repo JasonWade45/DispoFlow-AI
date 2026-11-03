@@ -13,6 +13,43 @@ body {
   font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
   background-color: #f8fafc;
   color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Native selects: Tailwind's appearance-none hides the arrow, so draw our own. */
+.select-chevron {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 14px 14px;
+  padding-right: 2.1rem;
+}
+
+/* Modal entrance — keeps dialogs feeling light instead of popping in. */
+@keyframes df-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes df-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-modal-in {
+  animation: df-modal-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.animate-fade-in {
+  animation: df-fade-in 0.16s ease-out;
 }
 
 ::-webkit-scrollbar {
